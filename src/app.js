@@ -1,3 +1,4 @@
+import {emailReady,issueEmailCode,consumeEmailCode} from './email-signin.js';
 import {workspaceChoice,handleWorkspaceAccess,enforceWorkspace} from './workspace-access.js';
 import {handleAdminConsole,enforceAdminPage,adminSection} from './admin-console.js';
 import {handleCommunity} from './community.js';
@@ -76,27 +77,37 @@ export async function handleRequest(request,env) {
    await rateLimit(env,`register:${request.headers.get('cf-connecting-ip')??'local'}`,5,3600000);
    const id=crypto.randomUUID(),hash=await hashPassword(password),now=nowOf(env);
    ensure(!await first(db,'SELECT user_id FROM den_credentials WHERE email=?',address),409,'ACCOUNT_EXISTS');
-   await db.batch([q(db,"INSERT INTO den_users(id,auth_subject,created_at) VALUES(?,?,?)",id,`password:${id}`,now),q(db,'INSERT INTO den_credentials(user_id,email,display_name,password_hash) VALUES(?,?,?,?)',id,address,name,hash)]);
+   const details=[];if(body.phone!==undefined)details.push(q(db,'INSERT INTO den_profiles(user_id,display_name,phone) VALUES(?,?,?)',id,name,text(body.phone,'phone',40)));if(body.address!==undefined){const code=text(body.country,'country',2,2).toUpperCase();await country(env,code);details.push(q(db,'INSERT INTO den_addresses VALUES(?,?,?,?,?)',crypto.randomUUID(),id,'Home',text(body.address,'address',1000),code));}
+   await db.batch([q(db,"INSERT INTO den_users(id,auth_subject,created_at) VALUES(?,?,?)",id,`password:${id}`,now),q(db,'INSERT INTO den_credentials(user_id,email,display_name,password_hash) VALUES(?,?,?,?)',id,address,name,hash),...details]);
    return response({id,message:'Account created. Sign in to continue.'},201);
   }
+  if(path==='/api/auth/options'&&method==='GET')return response({emailCodes:emailReady(env)});
+  if(path==='/api/auth/email-code'&&method==='POST'){
+   ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email);
+   await rateLimit(env,`email-ip:${request.headers.get('cf-connecting-ip')??'local'}`,8,900000);await rateLimit(env,`email-user:${address}`,3,900000);
+   const user=await first(db,"SELECT c.* FROM den_credentials c JOIN den_users u ON u.id=c.user_id WHERE c.email=? AND u.status='active' AND c.totp_enabled=1 AND NOT EXISTS(SELECT 1 FROM den_admin_accounts a WHERE a.user_id=c.user_id)",address);
+   if(user)await issueEmailCode(env,user,nowOf(env));return response({message:'If this account is eligible, a code has been sent. Administrators use password sign-in.'});
+  }
   if(path==='/api/auth/login'&&method==='POST') {
-   const body=await readJson(request),address=email(body.email),password=passwordValue(body.password);
+   const body=await readJson(request),address=email(body.email),emailMode=body.emailCode!==undefined,password=emailMode?'':passwordValue(body.password);
    await rateLimit(env,`login:${request.headers.get('cf-connecting-ip')??'local'}`,12,900000);
    const user=await first(db,'SELECT c.*,u.status FROM den_credentials c JOIN den_users u ON u.id=c.user_id WHERE c.email=?',address);
    // Equal-cost verification for unknown addresses avoids a cheap account enumeration path.
    const hash=user?.password_hash??DUMMY_PASSWORD_HASH;
-   ensure(await verifyPassword(password,hash)&&user?.status==='active',401,'INVALID_CREDENTIALS');
+   if(emailMode){ensure(emailReady(env)&&user?.status==='active'&&user.totp_enabled&&!await first(db,'SELECT user_id FROM den_admin_accounts WHERE user_id=?',user.user_id),401,'INVALID_CREDENTIALS');await rateLimit(env,`email-verify:${address}`,10,900000);}else ensure(await verifyPassword(password,hash)&&user?.status==='active',401,'INVALID_CREDENTIALS');
    await rateLimit(env,`login-account:${address}`,12,900000);
    let counter=null;
    if(user.totp_enabled) {
     counter=checkTotp(decryptSecret(user.totp_secret,env.MFA_ENCRYPTION_KEY),body.code,nowOf(env));
     ensure(counter!==null&&counter>user.last_totp_counter,401,'MFA_CODE_REQUIRED_OR_REUSED');
    }
+   if(emailMode)await consumeEmailCode(env,user,body.emailCode,nowOf(env));
    const token=randomToken(),csrf=randomToken(),now=nowOf(env);
    await run(db,'DELETE FROM den_sessions WHERE expires_at<=?',now);
    const statements=[];
-   if(counter!==null)statements.push(q(db,'UPDATE den_credentials SET last_totp_counter=? WHERE user_id=?',counter,user.user_id));
+   if(counter!==null)statements.push(q(db,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,EXISTS(SELECT 1 FROM den_credentials WHERE user_id=? AND last_totp_counter=?))',crypto.randomUUID(),user.user_id,user.last_totp_counter),q(db,'UPDATE den_credentials SET last_totp_counter=? WHERE user_id=?',counter,user.user_id));
    statements.push(q(db,'INSERT INTO den_sessions(token_hash,user_id,created_at,expires_at,authenticated_at,mfa_at,csrf_token) VALUES(?,?,?,?,?,?,?)',await hashToken(token),user.user_id,now,now+28800000,now,counter!==null?now:null,csrf));
+   statements.push(q(db,'INSERT INTO den_notifications(id,user_id,message,created_at) VALUES(?,?,?,?)',crypto.randomUUID(),user.user_id,'Security alert: a new sign-in to your DEN account.',now));
    await db.batch(statements);
    return response({csrfToken:csrf},200,{'set-cookie':sessionCookie(token,request)});
   }

@@ -1,0 +1,11 @@
+import {randomInt} from 'node:crypto';
+import {hashToken} from './security.js';
+import {ensure} from './http.js';
+export const emailReady=env=>Boolean(env.SEND_SIGNIN_EMAIL||(env.RESEND_API_KEY&&env.SIGNIN_EMAIL_FROM));
+export async function sendSigninEmail(env,to,code){
+ const message={from:env.SIGNIN_EMAIL_FROM,to:[to],subject:'Your DEN sign-in code',text:`Your DEN sign-in code is ${code}. It expires in 10 minutes and can be used once. If you did not request it, ignore this email. Never share this code.`};
+ if(env.SEND_SIGNIN_EMAIL){await env.SEND_SIGNIN_EMAIL(message);return;}
+ const result=await fetch('https://api.resend.com/emails',{method:'POST',headers:{authorization:`Bearer ${env.RESEND_API_KEY}`,'content-type':'application/json'},body:JSON.stringify(message),signal:AbortSignal.timeout(10000)});ensure(result.ok,503,'EMAIL_DELIVERY_UNAVAILABLE');
+}
+export async function issueEmailCode(env,user,now){const id=crypto.randomUUID(),code=String(randomInt(0,1000000)).padStart(6,'0');await env.DB.batch([env.DB.prepare('DELETE FROM den_email_signin_challenges WHERE user_id=? OR expires_at<=?').bind(user.user_id,now),env.DB.prepare('INSERT INTO den_email_signin_challenges(id,user_id,code_hash,expires_at) VALUES(?,?,?,?)').bind(id,user.user_id,await hashToken(`${id}:${code}`),now+600000)]);try{await sendSigninEmail(env,user.email,code);}catch(e){await env.DB.prepare('DELETE FROM den_email_signin_challenges WHERE id=?').bind(id).run();throw e;}}
+export async function consumeEmailCode(env,user,code,now){ensure(typeof code==='string'&&/^\d{6}$/.test(code),401,'INVALID_EMAIL_CODE');const challenge=await env.DB.prepare('SELECT * FROM den_email_signin_challenges WHERE user_id=? AND used_at IS NULL AND expires_at>? AND attempts<5 ORDER BY expires_at DESC LIMIT 1').bind(user.user_id,now).first();ensure(challenge,401,'INVALID_EMAIL_CODE');const hash=await hashToken(`${challenge.id}:${code}`);const result=await env.DB.prepare('UPDATE den_email_signin_challenges SET attempts=attempts+1,used_at=CASE WHEN code_hash=? THEN ? ELSE used_at END WHERE id=? AND used_at IS NULL AND expires_at>? AND attempts<5 RETURNING used_at').bind(hash,now,challenge.id,now).first();ensure(result?.used_at===now,401,'INVALID_EMAIL_CODE');}

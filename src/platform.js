@@ -1,3 +1,4 @@
+import {image} from './media.js';
 import {ensure,text,readJson,response} from './http.js';
 import {authorizeAdminChange,assignInternationalRole} from './policy.js';
 import {randomToken,hashToken,constantTimeEqual} from './security.js';
@@ -11,23 +12,29 @@ export async function handlePlatform(request,env,actor,h) {
  const guard=(condition,...args)=>q(db,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,('+condition+'))',id(),...args);
  const ownedOrg=async(orgId)=>{const o=await first(db,'SELECT * FROM den_organizations WHERE id=? AND owner_id=?',orgId,actor.id);ensure(o,404,'ORGANIZATION_NOT_FOUND');return o;};
  const notification=(user,message)=>q(db,'INSERT INTO den_notifications(id,user_id,message,created_at) VALUES(?,?,?,?)',id(),user,message,now);
+ if(route==='notification-preferences'){
+  if(method==='GET')return response({browserAlerts:Boolean((await first(db,'SELECT browser_alerts FROM den_notification_preferences WHERE user_id=?',actor.id))?.browser_alerts)});
+  if(method==='PATCH'){ensure(typeof body.browserAlerts==='boolean',400,'INVALID_PREFERENCES');await audit('notifications.preferences_updated',{},[q(db,'INSERT INTO den_notification_preferences VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET browser_alerts=excluded.browser_alerts',actor.id,Number(body.browserAlerts))]);return response({ok:true});}
+ }
  if(route==='profile') {
-  if(method==='GET')return response({profile:await first(db,'SELECT * FROM den_profiles WHERE user_id=?',actor.id)});
-  if(method==='PATCH'){await audit('profile.updated',{},[q(db,'INSERT INTO den_profiles VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,phone=excluded.phone',actor.id,text(body.name,'name',100),text(body.phone??'','phone',40,0))]);return response({ok:true});}
+  if(method==='GET')return response({profile:await first(db,'SELECT * FROM den_profiles WHERE user_id=?',actor.id)??{display_name:actor.display_name,phone:'',avatar:''}});
+  if(method==='PATCH'){await audit('profile.updated',{},[q(db,'INSERT INTO den_profiles(user_id,display_name,phone,avatar) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar=excluded.avatar',actor.id,text(body.name,'name',100),actor.phone??'',image(body.avatar))]);return response({ok:true});}
  }
  if(route==='addresses') {
   if(method==='GET')return response({addresses:await all(db,'SELECT * FROM den_addresses WHERE user_id=?',actor.id)});
   if(method==='POST'){const addressId=id();await audit('address.created',{addressId},[q(db,'INSERT INTO den_addresses VALUES(?,?,?,?,?)',addressId,actor.id,text(body.label,'label',60),text(body.address,'address',1000),text(body.country,'country',2,2))]);return response({id:addressId},201);}
  }
  if(route==='organizations') {
-  if(method==='GET')return response({organizations:await all(db,"SELECT * FROM den_organizations WHERE owner_id=? OR status='approved'",actor.id)});
-  if(method==='POST'){ensure(!await first(db,'SELECT user_id FROM den_riders WHERE user_id=?',actor.id),409,'MANAGER_RIDER_CONFLICT');const orgId=id();await audit('organization.submitted',{organizationId:orgId},[q(db,'INSERT INTO den_organizations(id,owner_id,name,country,created_at) VALUES(?,?,?,?,?)',orgId,actor.id,text(body.name,'name',120),text(body.country,'country',2,2),now)]);return response({id:orgId,status:'pending'},201);}
+  if(method==='GET')return response({organizations:await all(db,"SELECT id,owner_id,name,country,status,created_at,logo,about,support FROM den_organizations WHERE owner_id=? OR status='approved'",actor.id)});
+  if(method==='POST'){ensure(!await first(db,'SELECT user_id FROM den_riders WHERE user_id=?',actor.id),409,'MANAGER_RIDER_CONFLICT');const orgId=id(),saved=await first(db,'SELECT country FROM den_addresses WHERE user_id=? LIMIT 1',actor.id),code=text(body.country??saved?.country,'country',2,2).toUpperCase();ensure(await first(db,'SELECT code FROM den_countries WHERE code=?',code),400,'COUNTRY_NOT_CONFIGURED');await audit('organization.registered',{organizationId:orgId},[q(db,"INSERT INTO den_organizations(id,owner_id,name,country,status,created_at,logo,about,license,support) VALUES(?,?,?,?,'approved',?,?,?,?,?)",orgId,actor.id,text(body.name,'name',120),code,now,image(body.logo),text(body.about??'','about',1000,0),text(body.license??'','license',500,0),text(body.support??'','support',254,0))]);return response({id:orgId,status:'approved'},201);}
  }
+ const storeEdit=route.match(/^organizations\/([^/]+)$/);
+ if(storeEdit&&method==='PATCH'){const org=await ownedOrg(storeEdit[1]);ensure(org.status==='approved',403,'ACTIVE_ORGANIZATION_REQUIRED');await audit('organization.updated',{organizationId:org.id},[q(db,'UPDATE den_organizations SET name=?,logo=?,about=?,support=? WHERE id=?',text(body.name,'name',120),image(body.logo),text(body.about??'','about',1000,0),text(body.support??'','support',254,0),org.id)]);return response({ok:true});}
  const productsMatch=route.match(/^organizations\/([^/]+)\/products$/);
  if(productsMatch) {
   const org=await first(db,'SELECT * FROM den_organizations WHERE id=?',productsMatch[1]);ensure(org&&(org.status==='approved'||org.owner_id===actor.id),404,'ORGANIZATION_NOT_FOUND');
   if(method==='GET')return response({products:await all(db,'SELECT * FROM den_products WHERE organization_id=? AND active=1',org.id)});
-  if(method==='POST'){ensure(org.owner_id===actor.id&&org.status==='approved',403,'APPROVED_OWNER_REQUIRED');ensure(Number.isSafeInteger(body.priceMinor)&&body.priceMinor>0&&body.priceMinor<=1e9&&Number.isSafeInteger(body.stock)&&body.stock>=0&&body.stock<=1e6,400,'INVALID_PRICE_OR_STOCK');const configuredCountry=await first(db,'SELECT currency FROM den_countries WHERE code=?',org.country);ensure(configuredCountry?.currency===String(body.currency).toUpperCase(),400,'ORGANIZATION_CURRENCY_REQUIRED');const productId=id();await audit('product.created',{productId,organizationId:org.id},[guard("EXISTS(SELECT 1 FROM den_organizations WHERE id=? AND owner_id=? AND status='approved')",org.id,actor.id),q(db,'INSERT INTO den_products(id,organization_id,name,price_minor,currency,stock) VALUES(?,?,?,?,?,?)',productId,org.id,text(body.name,'name',120),body.priceMinor,text(body.currency,'currency',3,3).toUpperCase(),body.stock)]);return response({id:productId},201);}
+  if(method==='POST'){ensure(org.owner_id===actor.id&&org.status==='approved',403,'APPROVED_OWNER_REQUIRED');ensure(Number.isSafeInteger(body.priceMinor)&&body.priceMinor>0&&body.priceMinor<=1e9&&Number.isSafeInteger(body.stock)&&body.stock>=0&&body.stock<=1e6,400,'INVALID_PRICE_OR_STOCK');const configuredCountry=await first(db,'SELECT currency FROM den_countries WHERE code=?',org.country);ensure(configuredCountry?.currency===String(body.currency).toUpperCase(),400,'ORGANIZATION_CURRENCY_REQUIRED');const productId=id();await audit('product.created',{productId,organizationId:org.id},[guard("EXISTS(SELECT 1 FROM den_organizations WHERE id=? AND owner_id=? AND status='approved')",org.id,actor.id),q(db,'INSERT INTO den_products(id,organization_id,name,price_minor,currency,stock,image,description) VALUES(?,?,?,?,?,?,?,?)',productId,org.id,text(body.name,'name',120),body.priceMinor,text(body.currency,'currency',3,3).toUpperCase(),body.stock,image(body.image),text(body.description??'','description',2000,0))]);return response({id:productId},201);}
  }
  if(route==='rider') {
   if(method==='GET')return response({rider:await first(db,'SELECT * FROM den_riders WHERE user_id=?',actor.id)});
@@ -50,7 +57,7 @@ export async function handlePlatform(request,env,actor,h) {
  if(productEdit&&method==='PATCH'){
   const product=await first(db,'SELECT p.*,o.owner_id,o.status FROM den_products p JOIN den_organizations o ON o.id=p.organization_id WHERE p.id=?',productEdit[1]);ensure(product?.owner_id===actor.id,404,'PRODUCT_NOT_FOUND');ensure(product.status==='approved',403,'APPROVED_OWNER_REQUIRED');
   const stock=body.stock??product.stock,price=body.priceMinor??product.price_minor,name=body.name===undefined?product.name:text(body.name,'name',120);ensure(Number.isSafeInteger(stock)&&stock>=0&&stock<=1e6&&Number.isSafeInteger(price)&&price>0&&price<=1e9,400,'INVALID_PRICE_OR_STOCK');
-  await audit('product.updated',{productId:product.id},[guard('EXISTS(SELECT 1 FROM den_products WHERE id=? AND stock=? AND price_minor=?)',product.id,product.stock,product.price_minor),guard("EXISTS(SELECT 1 FROM den_organizations WHERE id=? AND owner_id=? AND status='approved')",product.organization_id,actor.id),q(db,'UPDATE den_products SET name=?,price_minor=?,stock=? WHERE id=?',name,price,stock,product.id)]);return response({ok:true});
+  await audit('product.updated',{productId:product.id},[guard('EXISTS(SELECT 1 FROM den_products WHERE id=? AND stock=? AND price_minor=?)',product.id,product.stock,product.price_minor),guard("EXISTS(SELECT 1 FROM den_organizations WHERE id=? AND owner_id=? AND status='approved')",product.organization_id,actor.id),q(db,'UPDATE den_products SET name=?,price_minor=?,stock=?,image=?,description=? WHERE id=?',name,price,stock,body.image===undefined?product.image:image(body.image),body.description===undefined?product.description:text(body.description,'description',2000,0),product.id)]);return response({ok:true});
  }
  if(route==='admin/reviews') {
   if(method==='GET')freshAdmin(actor,env,actor.permissions?.includes('rider_verification_admin')?'rider_verification_admin':'organization_verification_admin');

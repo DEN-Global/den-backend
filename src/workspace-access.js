@@ -2,7 +2,7 @@ import {ensure,readJson,response} from './http.js';
 export const selectableWorkspaces=Object.freeze(['manager','rider','dispatch','transport','shipment','warehouse']);
 export function workspaceForPath(path){
  if(/^\/api\/(admin\/|admin-console\/|platform\/admin\/)/.test(path))return 'admin';
- if(/^\/api\/platform\/(organizations(?:\/[^/]+\/products)?|products\/[^/]+)$/.test(path))return 'manager';
+ if(/^\/api\/platform\/(organizations(?:\/[^/]+(?:\/products)?)?|products\/[^/]+)$/.test(path))return 'manager';
  if(path==='/api/platform/rider')return 'rider';
  if(/^\/api\/(businesses|my-facilities|facilities|invitations)(\/|$)/.test(path))return 'warehouse';
  if(path==='/api/mobility/driver')return 'transport';
