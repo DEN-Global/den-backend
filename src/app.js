@@ -1,3 +1,7 @@
+import {handleCommunity} from './community.js';
+import { handleServices } from './services-api.js';
+import { handlePlatform } from './platform.js';
+import { handleMobility } from './mobility.js';
 import { response, readJson, ensure, text, email, password as passwordValue, HttpError } from './http.js';
 import { randomToken, hashToken, hashPassword, verifyPassword, encryptSecret, decryptSecret, newTotp, checkTotp, constantTimeEqual } from './security.js';
 import { createAuditRecord, auditGenesis } from './audit.js';
@@ -30,7 +34,7 @@ async function auditBatch(env,actor,action,payload,statements) {
  const record=await createAuditRecord({sequence:(head?.sequence??0)+1,actorId:actor.id,action,occurredAt:nowOf(env),payload:JSON.stringify(payload),previousHash:head?.event_hash??auditGenesis});
  // A duplicate sequence/hash from a concurrent append makes D1 roll back the entire batch.
  const guard=crypto.randomUUID();
- return env.DB.batch([q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,(SELECT COALESCE(MAX(sequence),0)=? FROM den_audit_events))',guard,head?.sequence??0),...statements,q(env.DB,'INSERT INTO den_audit_events(sequence,actor_id,action,occurred_at,payload,previous_hash,event_hash) VALUES(?,?,?,?,?,?,?)',record.sequence,actor.id,action,record.occurredAt,record.payload,record.previousHash,record.eventHash),q(env.DB,'DELETE FROM den_transaction_guards WHERE id=?',guard)]);
+ return env.DB.batch([q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,(SELECT COALESCE(MAX(sequence),0)=? FROM den_audit_events))',guard,head?.sequence??0),...statements,q(env.DB,'INSERT INTO den_audit_events(sequence,actor_id,action,occurred_at,payload,previous_hash,event_hash) VALUES(?,?,?,?,?,?,?)',record.sequence,actor.id,action,record.occurredAt,record.payload,record.previousHash,record.eventHash),q(env.DB,'DELETE FROM den_transaction_guards')]);
 }
 async function ownBusiness(env,actor,id,approved=false) {
  const b=await first(env.DB,'SELECT * FROM den_warehouse_businesses WHERE id=? AND owner_id=?',id,actor.id);
@@ -61,7 +65,7 @@ export async function handleRequest(request,env) {
    const ip=request.headers.get('cf-connecting-ip')??'local';
    await rateLimit(env,`write:${ip}`,90,60000);
   }
-  if(path==='/api/health'&&method==='GET') return response({status:'ok',service:'DEN warehouse API'});
+  if(path==='/api/health'&&method==='GET') return response({status:'ok',service:'DEN shared platform API',contractVersion:'1.0.0'});
   if(path==='/api/auth/register'&&method==='POST') {
    const body=await readJson(request),address=email(body.email),name=text(body.name,'name',100),password=passwordValue(body.password,12);
    await rateLimit(env,`register:${request.headers.get('cf-connecting-ip')??'local'}`,5,3600000);
@@ -131,6 +135,11 @@ export async function handleRequest(request,env) {
    await auditBatch(env,actor,transition.audit.action,{countries:body.countries,revision:transition.state.revision},statements);
    return response(transition.state);
   }
+  const helpers={q,first,all,run,auditBatch,nowOf,freshAdmin};
+  const platformResult=await handlePlatform(request,env,actor,helpers);if(platformResult)return platformResult;
+  const communityResult=await handleCommunity(request,env,actor,helpers);if(communityResult)return communityResult;
+  const serviceResult=await handleServices(request,env,actor,helpers);if(serviceResult)return serviceResult;
+  const mobilityResult=await handleMobility(request,env,actor,helpers);if(mobilityResult)return mobilityResult;
   if(path==='/api/businesses'&&method==='GET')return response({businesses:await all(db,'SELECT * FROM den_warehouse_businesses WHERE owner_id=? ORDER BY created_at DESC',actor.id)});
   if(path==='/api/businesses'&&method==='POST') {
    const body=await readJson(request),legalName=text(body.legalName,'legal_name',200),code=text(body.country,'country',2,2);await country(env,code);

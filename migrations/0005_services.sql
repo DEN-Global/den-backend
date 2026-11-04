@@ -1,0 +1,11 @@
+CREATE TABLE den_service_messages(id TEXT PRIMARY KEY,order_id TEXT NOT NULL REFERENCES den_orders(id),channel TEXT NOT NULL CHECK(channel IN('rider_consumer','manager_rider')),sender_id TEXT NOT NULL REFERENCES den_users(id),body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 4000),created_at INTEGER NOT NULL);
+CREATE INDEX den_service_messages_scope ON den_service_messages(order_id,channel,created_at);
+CREATE TABLE den_service_locations(id TEXT PRIMARY KEY,order_id TEXT NOT NULL REFERENCES den_orders(id),rider_id TEXT NOT NULL REFERENCES den_users(id),latitude REAL NOT NULL CHECK(latitude BETWEEN -90 AND 90),longitude REAL NOT NULL CHECK(longitude BETWEEN -180 AND 180),accuracy_meters REAL NOT NULL CHECK(accuracy_meters BETWEEN 0 AND 10000),recorded_at INTEGER NOT NULL,received_at INTEGER NOT NULL,simulated INTEGER NOT NULL CHECK(simulated IN(0,1)),UNIQUE(order_id,recorded_at));
+CREATE INDEX den_service_locations_scope ON den_service_locations(order_id,recorded_at);
+CREATE TABLE den_service_wallet_entries(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES den_users(id),currency TEXT NOT NULL CHECK(length(currency)=3),amount_minor INTEGER NOT NULL,reference TEXT NOT NULL,created_at INTEGER NOT NULL);
+CREATE INDEX den_service_wallet_scope ON den_service_wallet_entries(user_id,currency,created_at);
+ALTER TABLE den_notifications ADD COLUMN read_at INTEGER;
+CREATE TRIGGER den_service_messages_immutable BEFORE UPDATE ON den_service_messages BEGIN SELECT RAISE(ABORT,'MESSAGE_APPEND_ONLY'); END;
+CREATE TRIGGER den_service_locations_immutable BEFORE UPDATE ON den_service_locations BEGIN SELECT RAISE(ABORT,'LOCATION_APPEND_ONLY'); END;
+CREATE TRIGGER den_service_wallet_immutable BEFORE UPDATE ON den_service_wallet_entries BEGIN SELECT RAISE(ABORT,'WALLET_APPEND_ONLY'); END;
+CREATE TRIGGER den_service_wallet_no_delete BEFORE DELETE ON den_service_wallet_entries BEGIN SELECT RAISE(ABORT,'WALLET_APPEND_ONLY'); END;

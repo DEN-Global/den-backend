@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {readFileSync} from 'node:fs';
+import {readFileSync,readdirSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
@@ -11,7 +11,7 @@ test('Workers runtime executes scrypt auth and real D1-backed warehouse registra
  t.after(()=>mf.dispose());const db=await mf.getD1Database('DB');
  // Use SQLite's own parser to preserve trigger bodies, then execute each statement in D1.
  const parser=new DatabaseSync(':memory:');t.after(()=>parser.close());
- for(const filename of ['0001_foundation.sql','0002_warehouse_api.sql']) {
+ for(const filename of readdirSync(new URL('../migrations/',import.meta.url)).filter(f=>f.endsWith('.sql')).sort()) {
   let remaining=readFileSync(new URL(`../migrations/${filename}`,import.meta.url),'utf8');
   while(remaining.trim()) {const sql=parser.prepare(remaining).sourceSQL;parser.exec(sql);await db.prepare(sql).run();remaining=remaining.slice(sql.length);}
  }
@@ -26,5 +26,9 @@ test('Workers runtime executes scrypt auth and real D1-backed warehouse registra
  const signedIn=await request('/api/auth/login','POST',{email:'runtime@example.test',password:'runtime-test-password-2026'});assert.equal(signedIn.status,200,JSON.stringify(signedIn));
  const business=await request('/api/businesses','POST',{legalName:'Runtime test business',country:'NG',registeredAddress:'Local runtime test address'});assert.equal(business.status,201,JSON.stringify(business));
  assert.equal((await request('/api/businesses')).data.businesses.length,1);
+ assert.equal((await request('/api/platform/addresses','POST',{label:'Home',address:'Runtime address',country:'NG'})).status,201);
+ assert.equal((await request('/api/platform/rider','POST',{vehicle:'bicycle'})).status,201);
+ assert.equal((await request('/api/services/wallet')).data.liveMoneyEnabled,false);
+ assert.equal((await request('/api/mobility/requests')).status,200);
  assert.equal((await request('/api/international/bookings','POST',{})).status,423);
 });

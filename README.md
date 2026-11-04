@@ -1,6 +1,6 @@
 # DEN shared backend
 
-Authenticated warehouse partner API and shared DEN domain policies. This is a working development slice, not the completed ecosystem or a production launch.
+Authenticated shared DEN platform API and domain policies. This is a working development slice, not the completed ecosystem or a production launch.
 
 ## Run locally
 
@@ -36,7 +36,7 @@ Restart the local server after this command. Enroll MFA in Security before revie
 
 ## Verification
 
-54 automated tests cover policies, SQL constraints, actual HTTP flows, negative authorization cases, concurrency, restart persistence, and the Worker running on workerd with D1 and real password hashing. `npm run build` validates the Cloudflare Vite/cf bundle. See [warehouse acceptance](docs/warehouse-acceptance.md), [requirements](docs/master-requirements.md) and [decisions](docs/decisions.md).
+73 automated tests cover policies, SQL constraints, actual HTTP flows, negative authorization cases, concurrency, restart persistence, and the Worker running on workerd with D1 and real password hashing. `npm run build` validates the Cloudflare Vite/cf bundle. See [warehouse acceptance](docs/warehouse-acceptance.md), [requirements](docs/master-requirements.md) and [decisions](docs/decisions.md).
 
 ## Production boundaries
 
@@ -44,10 +44,18 @@ No remote resources have been provisioned. `cf` configuration requires explicit 
 
 Email ownership verification, password/account recovery, MFA recovery, production administrator provisioning, independent audit checkpoints, security monitoring and a reviewed launch configuration remain unfinished. Do not open public onboarding before these are implemented. No live identity verification, documents, payments, carrier, maps, legal approvals or automatic deductions are connected.
 
-Inventory accounting, full shipment/custody transitions, offline synchronization, QR/code handoffs, consumer/rider/merchant apps, complete finance/admin portals and the wider master requirements remain to be built. The international booking endpoint fails closed; unlocking alone cannot create live bookings.
+Core consumer/merchant/rider/dispatch/admin development apps and a verified sandbox order-to-delivery flow are now implemented. Full warehouse inventory accounting, provider shipment/custody integration, offline synchronization and complete finance/admin operations remain unfinished. The international booking endpoint fails closed; unlocking alone cannot create live bookings.
 
 ## Deployment and rollback
 
 Use separate development, staging and production databases and keys. Review and apply additive migrations in order after backup; never point local tests at production. Configure same-origin frontend assets/API, secret MFA key, trusted Primary identity, cookie HTTPS and origin before deployment. No deploy command is executed by this repository automatically.
 
 Rollback application code to the previous known build. Preserve database history and audit records; do not drop migrations or erase data to roll back. Test backup restoration and forward fixes in staging before any production migration.
+
+## Full platform expansion
+
+The new `/api/platform/` endpoints connect organizations, approved products, stock, cart, sandbox digital checkout, role-scoped orders, first-successful rider reservations, Ready, organization identification, Confirm Handoff, pickup, separate cash confirmation, delivery code and expiring completion QR. `/api/community/` supports public reviews/posts/comments with atomic rider membership caps. `/api/services/` provides scoped delivery chat/location, notifications, ledger read and unapproved Pricing Lab scenarios. `/api/mobility/` saves domestic transport/shipment quotation requests without inventing quotes or bookings.
+
+The localhost server now serves eight sibling role builds through one origin and a den-infrastructure portal at `/`. Start with `DEN_SANDBOX_PAYMENTS=true npm run dev` only when explicitly testing the local simulator. Default checkout remains disabled. No real money is processed in either mode.
+
+See DEN-Global/den-docs IMPLEMENTATION_TRACKER.md for every repository's implemented and unfinished scope. The original warehouse acceptance report remains a historical milestone, not the latest full-platform status.

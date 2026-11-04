@@ -1,0 +1,43 @@
+{
+  "chat": {
+    "repository": "DEN-Global/den-chat",
+    "packageVersion": "0.1.0",
+    "contractVersion": "1.0.0",
+    "source": "src/index.js",
+    "sha256": "53b927fff9c64de60b2a2b8b5bb027b99572533ab196ea8e1d4097dab61810bc"
+  },
+  "tracking": {
+    "repository": "DEN-Global/den-tracking",
+    "packageVersion": "0.1.0",
+    "contractVersion": "1.0.0",
+    "source": "src/index.js",
+    "sha256": "2f600d6d51a0333dc1d10e338911481b91f6921ec6071f2c754035b65140d4d4"
+  },
+  "wallet": {
+    "repository": "DEN-Global/den-wallet",
+    "packageVersion": "0.1.0",
+    "contractVersion": "1.0.0",
+    "source": "src/index.js",
+    "sha256": "99539b300ff96f59a62a765ef070a87fd370c96d4f2c1a72a6d04443d6339416"
+  },
+  "payments": {
+    "repository": "DEN-Global/den-payments",
+    "packageVersion": "0.1.0",
+    "contractVersion": "1.0.0",
+    "source": "src/index.js",
+    "sha256": "3f0786cae283370b2efe7a66959734a4897c992ac0d9469d621839f289ef0553",
+    "additionalFiles": {
+      "commissions.js": {
+        "source": "src/commissions.js",
+        "sha256": "ad9f76684a3e930cc2ccfb827e20ed2cb77804ef411b055002222c505589bcfa"
+      }
+    }
+  },
+  "notifications": {
+    "repository": "DEN-Global/den-notifications",
+    "packageVersion": "0.1.0",
+    "contractVersion": "1.0.0",
+    "source": "src/index.js",
+    "sha256": "b74e9194282ade8fe754860305468a9d2a2fec662bcc3a63b1db156de75c10f7"
+  }
+}

@@ -92,13 +92,13 @@ test('expired sessions are rejected and setup requires the correct password',asy
  f.advance(28800001);assert.equal((await owner.request('/api/businesses')).status,401);
 });
 test('persisted business and schema checksums survive a local database restart',async t=>{
- const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const {mkdtempSync,rmSync,readdirSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const dir=mkdtempSync(join(tmpdir(),'den-persistence-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const path=join(dir,'local.sqlite');let db=openLocalDatabase(path);
  await db.prepare("INSERT INTO den_users(id,auth_subject,created_at) VALUES('persistent-user','persistent-subject',0)").run();
  await db.prepare("INSERT INTO den_warehouse_businesses(id,owner_id,legal_name,country,created_at) VALUES('persistent-business','persistent-user','Persisted business','NG',0)").run();db.close();
  db=openLocalDatabase(path);t.after(()=>db.close());assert.equal((await db.prepare("SELECT legal_name FROM den_warehouse_businesses WHERE id='persistent-business'").first()).legal_name,'Persisted business');
- assert.equal((await db.prepare('SELECT count(*) AS n FROM den_schema_migrations').first()).n,2);
+ assert.equal((await db.prepare('SELECT count(*) AS n FROM den_schema_migrations').first()).n,readdirSync(new URL('../migrations/',import.meta.url)).filter(name=>name.endsWith('.sql')).length);
 });
 
 test('lesser super admin cannot change the master lock through the real API with fresh MFA',async t=>{

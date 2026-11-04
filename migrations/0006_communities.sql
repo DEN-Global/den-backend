@@ -1,0 +1,10 @@
+CREATE TABLE den_communities(id TEXT PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name)) BETWEEN 1 AND 100),country TEXT NOT NULL REFERENCES den_countries(code),creator_id TEXT NOT NULL REFERENCES den_users(id),created_at INTEGER NOT NULL);
+CREATE TABLE den_community_memberships(community_id TEXT NOT NULL REFERENCES den_communities(id),user_id TEXT NOT NULL REFERENCES den_users(id),joined_at INTEGER NOT NULL,PRIMARY KEY(community_id,user_id));
+CREATE INDEX den_memberships_user ON den_community_memberships(user_id);
+CREATE TRIGGER den_rider_community_cap BEFORE INSERT ON den_community_memberships WHEN EXISTS(SELECT 1 FROM den_riders WHERE user_id=NEW.user_id) AND (SELECT COUNT(*) FROM den_community_memberships WHERE user_id=NEW.user_id)>=5 BEGIN SELECT RAISE(ABORT,'RIDER_COMMUNITY_LIMIT'); END;
+CREATE TRIGGER den_rider_application_community_cap BEFORE INSERT ON den_riders WHEN (SELECT COUNT(*) FROM den_community_memberships WHERE user_id=NEW.user_id)>5 BEGIN SELECT RAISE(ABORT,'RIDER_COMMUNITY_LIMIT'); END;
+CREATE TABLE den_community_posts(id TEXT PRIMARY KEY,community_id TEXT NOT NULL REFERENCES den_communities(id),author_id TEXT NOT NULL REFERENCES den_users(id),body TEXT NOT NULL CHECK(length(trim(body)) BETWEEN 1 AND 2000),created_at INTEGER NOT NULL,deleted_at INTEGER);
+CREATE INDEX den_posts_community ON den_community_posts(community_id,created_at);
+CREATE TABLE den_community_comments(id TEXT PRIMARY KEY,post_id TEXT NOT NULL REFERENCES den_community_posts(id),author_id TEXT NOT NULL REFERENCES den_users(id),body TEXT NOT NULL CHECK(length(trim(body)) BETWEEN 1 AND 1000),created_at INTEGER NOT NULL,deleted_at INTEGER);
+CREATE TABLE den_organization_reviews(id TEXT PRIMARY KEY,organization_id TEXT NOT NULL REFERENCES den_organizations(id),order_id TEXT NOT NULL UNIQUE REFERENCES den_orders(id),author_id TEXT NOT NULL REFERENCES den_users(id),rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),body TEXT NOT NULL CHECK(length(trim(body)) BETWEEN 1 AND 2000),created_at INTEGER NOT NULL,deleted_at INTEGER);
+CREATE INDEX den_reviews_org ON den_organization_reviews(organization_id,created_at);

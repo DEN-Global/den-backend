@@ -1,0 +1,100 @@
+import {ensure,text,readJson,response} from './http.js';
+import {authorizeAdminChange,assignInternationalRole} from './policy.js';
+import {randomToken,hashToken,constantTimeEqual} from './security.js';
+
+export async function handlePlatform(request,env,actor,h) {
+ const path=new URL(request.url).pathname;if(!path.startsWith('/api/platform/'))return null;
+ const route=path.slice(14),method=request.method,db=env.DB,{q,first,all,auditBatch,nowOf,freshAdmin}=h,now=nowOf(env);
+ const body=method==='GET'?{}:await readJson(request);
+ const id=()=>crypto.randomUUID();
+ const audit=(action,payload,statements)=>auditBatch(env,actor,action,payload,statements);
+ const guard=(condition,...args)=>q(db,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,('+condition+'))',id(),...args);
+ const ownedOrg=async(orgId)=>{const o=await first(db,'SELECT * FROM den_organizations WHERE id=? AND owner_id=?',orgId,actor.id);ensure(o,404,'ORGANIZATION_NOT_FOUND');return o;};
+ const notification=(user,message)=>q(db,'INSERT INTO den_notifications(id,user_id,message,created_at) VALUES(?,?,?,?)',id(),user,message,now);
+ if(route==='profile') {
+  if(method==='GET')return response({profile:await first(db,'SELECT * FROM den_profiles WHERE user_id=?',actor.id)});
+  if(method==='PATCH'){await audit('profile.updated',{},[q(db,'INSERT INTO den_profiles VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,phone=excluded.phone',actor.id,text(body.name,'name',100),text(body.phone??'','phone',40,0))]);return response({ok:true});}
+ }
+ if(route==='addresses') {
+  if(method==='GET')return response({addresses:await all(db,'SELECT * FROM den_addresses WHERE user_id=?',actor.id)});
+  if(method==='POST'){const addressId=id();await audit('address.created',{addressId},[q(db,'INSERT INTO den_addresses VALUES(?,?,?,?,?)',addressId,actor.id,text(body.label,'label',60),text(body.address,'address',1000),text(body.country,'country',2,2))]);return response({id:addressId},201);}
+ }
+ if(route==='organizations') {
+  if(method==='GET')return response({organizations:await all(db,"SELECT * FROM den_organizations WHERE owner_id=? OR status='approved'",actor.id)});
+  if(method==='POST'){ensure(!await first(db,'SELECT user_id FROM den_riders WHERE user_id=?',actor.id),409,'MANAGER_RIDER_CONFLICT');const orgId=id();await audit('organization.submitted',{organizationId:orgId},[q(db,'INSERT INTO den_organizations(id,owner_id,name,country,created_at) VALUES(?,?,?,?,?)',orgId,actor.id,text(body.name,'name',120),text(body.country,'country',2,2),now)]);return response({id:orgId,status:'pending'},201);}
+ }
+ const productsMatch=route.match(/^organizations\/([^/]+)\/products$/);
+ if(productsMatch) {
+  const org=await first(db,'SELECT * FROM den_organizations WHERE id=?',productsMatch[1]);ensure(org&&(org.status==='approved'||org.owner_id===actor.id),404,'ORGANIZATION_NOT_FOUND');
+  if(method==='GET')return response({products:await all(db,'SELECT * FROM den_products WHERE organization_id=? AND active=1',org.id)});
+  if(method==='POST'){ensure(org.owner_id===actor.id&&org.status==='approved',403,'APPROVED_OWNER_REQUIRED');ensure(Number.isSafeInteger(body.priceMinor)&&body.priceMinor>0&&body.priceMinor<=1e9&&Number.isSafeInteger(body.stock)&&body.stock>=0&&body.stock<=1e6,400,'INVALID_PRICE_OR_STOCK');const configuredCountry=await first(db,'SELECT currency FROM den_countries WHERE code=?',org.country);ensure(configuredCountry?.currency===String(body.currency).toUpperCase(),400,'ORGANIZATION_CURRENCY_REQUIRED');const productId=id();await audit('product.created',{productId,organizationId:org.id},[guard("EXISTS(SELECT 1 FROM den_organizations WHERE id=? AND owner_id=? AND status='approved')",org.id,actor.id),q(db,'INSERT INTO den_products(id,organization_id,name,price_minor,currency,stock) VALUES(?,?,?,?,?,?)',productId,org.id,text(body.name,'name',120),body.priceMinor,text(body.currency,'currency',3,3).toUpperCase(),body.stock)]);return response({id:productId},201);}
+ }
+ if(route==='rider') {
+  if(method==='GET')return response({rider:await first(db,'SELECT * FROM den_riders WHERE user_id=?',actor.id)});
+  if(method==='POST'){ensure(!await first(db,'SELECT id FROM den_organizations WHERE owner_id=?',actor.id),409,'MANAGER_RIDER_CONFLICT');await audit('rider.submitted',{},[q(db,'INSERT INTO den_riders(user_id,vehicle,created_at) VALUES(?,?,?)',actor.id,text(body.vehicle,'vehicle',100),now)]);return response({status:'pending'},201);}
+ }
+ if(route==='admin/accounts') {
+  freshAdmin(actor,env,'admins.manage');ensure(actor.id===env.PRIMARY_ADMIN_ID||actor.adminLevel==='lesser_super_admin',403,'SUPER_ADMIN_REQUIRED');
+  if(method==='GET')return response({accounts:await all(db,'SELECT a.user_id,a.level,a.permissions,c.email,c.display_name FROM den_admin_accounts a JOIN den_credentials c ON c.user_id=a.user_id')});
+  if(method==='POST'){
+   const targetId=text(body.userId,'userId'),target=await first(db,'SELECT u.id,a.level FROM den_users u LEFT JOIN den_admin_accounts a ON a.user_id=u.id WHERE u.id=?',targetId);ensure(target,404,'USER_NOT_FOUND');
+   authorizeAdminChange({actor,primaryAdminId:env.PRIMARY_ADMIN_ID,target:{id:target.id,adminLevel:target.level??'ordinary'},requestedLevel:body.level,now});
+   const allowed=['finance_admin','rider_verification_admin','organization_verification_admin','community_moderation_admin','delivery_operations_admin','shipping_admin','support_admin','security_audit_admin','global_shipping_admin','international_trade_admin','warehouse_admin','warehouse.review','roles.assign','trade.continue_locked'];
+   ensure(Array.isArray(body.permissions)&&body.permissions.length<=allowed.length&&body.permissions.every(p=>allowed.includes(p)),400,'INVALID_PERMISSIONS');
+   const permissions=[...new Set(body.permissions)],international=permissions.filter(p=>['global_shipping_admin','international_trade_admin','warehouse_admin'].includes(p)),statements=[];
+   if(international.length){const trade=await first(db,'SELECT enabled FROM den_trade_state WHERE singleton=1');for(const role of international)assignInternationalRole({actor,targetId,role,state:{enabled:trade.enabled===1}});statements.push(guard('EXISTS(SELECT 1 FROM den_trade_state WHERE singleton=1 AND enabled=1)'));}
+   statements.push(guard('EXISTS(SELECT 1 FROM den_users WHERE id=?) AND (SELECT level FROM den_admin_accounts WHERE user_id=?) IS ?',targetId,targetId,target.level??null),q(db,'INSERT INTO den_admin_accounts VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET level=excluded.level,permissions=excluded.permissions',targetId,body.level,JSON.stringify(permissions)),q(db,'DELETE FROM den_sessions WHERE user_id=?',targetId));await audit('admin.account_changed',{targetId,level:body.level,permissions},statements);return response({ok:true});
+  }
+ }
+ const productEdit=route.match(/^products\/([^/]+)$/);
+ if(productEdit&&method==='PATCH'){
+  const product=await first(db,'SELECT p.*,o.owner_id,o.status FROM den_products p JOIN den_organizations o ON o.id=p.organization_id WHERE p.id=?',productEdit[1]);ensure(product?.owner_id===actor.id,404,'PRODUCT_NOT_FOUND');ensure(product.status==='approved',403,'APPROVED_OWNER_REQUIRED');
+  const stock=body.stock??product.stock,price=body.priceMinor??product.price_minor,name=body.name===undefined?product.name:text(body.name,'name',120);ensure(Number.isSafeInteger(stock)&&stock>=0&&stock<=1e6&&Number.isSafeInteger(price)&&price>0&&price<=1e9,400,'INVALID_PRICE_OR_STOCK');
+  await audit('product.updated',{productId:product.id},[guard('EXISTS(SELECT 1 FROM den_products WHERE id=? AND stock=? AND price_minor=?)',product.id,product.stock,product.price_minor),guard("EXISTS(SELECT 1 FROM den_organizations WHERE id=? AND owner_id=? AND status='approved')",product.organization_id,actor.id),q(db,'UPDATE den_products SET name=?,price_minor=?,stock=? WHERE id=?',name,price,stock,product.id)]);return response({ok:true});
+ }
+ if(route==='admin/reviews') {
+  if(method==='GET')freshAdmin(actor,env,actor.permissions?.includes('rider_verification_admin')?'rider_verification_admin':'organization_verification_admin');
+  if(method==='GET')return response({organizations:await all(db,'SELECT * FROM den_organizations'),riders:await all(db,'SELECT * FROM den_riders')});
+  if(method==='POST'){ensure(['organization','rider'].includes(body.type)&&['approved','rejected','suspended'].includes(body.status),400,'INVALID_REVIEW');freshAdmin(actor,env,body.type==='rider'?'rider_verification_admin':'organization_verification_admin');const table=body.type==='rider'?'den_riders':'den_organizations',key=body.type==='rider'?'user_id':'id';const target=await first(db,`SELECT * FROM ${table} WHERE ${key}=?`,text(body.id,'id'));ensure(target,404,'REVIEW_NOT_FOUND');ensure((target.owner_id??target.user_id)!==actor.id,403,'SELF_REVIEW_FORBIDDEN');await audit(`${body.type}.reviewed`,{id:body.id,status:body.status,reason:text(body.reason,'reason',1000,10)},[q(db,`UPDATE ${table} SET status=? WHERE ${key}=?`,body.status,body.id),notification(target.owner_id??target.user_id,`${body.type} application: ${body.status}`)]);return response({ok:true});}
+ }
+ if(route==='cart') {
+  if(method==='GET')return response({items:await all(db,'SELECT c.*,p.name,p.price_minor,p.currency,p.stock,p.organization_id FROM den_cart c JOIN den_products p ON p.id=c.product_id WHERE c.user_id=?',actor.id)});
+  if(method==='POST'){const product=await first(db,"SELECT p.* FROM den_products p JOIN den_organizations o ON o.id=p.organization_id WHERE p.id=? AND p.active=1 AND o.status='approved'",text(body.productId,'productId'));ensure(product,404,'PRODUCT_NOT_FOUND');ensure(Number.isSafeInteger(body.quantity)&&body.quantity>=0&&body.quantity<=100,400,'INVALID_QUANTITY');await audit('cart.updated',{productId:product.id},[body.quantity?q(db,'INSERT INTO den_cart VALUES(?,?,?) ON CONFLICT(user_id,product_id) DO UPDATE SET quantity=excluded.quantity',actor.id,product.id,body.quantity):q(db,'DELETE FROM den_cart WHERE user_id=? AND product_id=?',actor.id,product.id)]);return response({ok:true});}
+ }
+ if(route==='orders'&&method==='POST') {
+  ensure(env.DEN_SANDBOX_PAYMENTS==='true',503,'PAYMENT_PROVIDER_NOT_CONFIGURED');ensure(['cash','digital'].includes(body.deliveryPayment),400,'INVALID_DELIVERY_PAYMENT');
+  const address=await first(db,'SELECT * FROM den_addresses WHERE id=? AND user_id=?',text(body.addressId,'addressId'),actor.id);ensure(address,404,'ADDRESS_NOT_FOUND');
+  const items=await all(db,"SELECT c.quantity,p.* FROM den_cart c JOIN den_products p ON p.id=c.product_id JOIN den_organizations o ON o.id=p.organization_id WHERE c.user_id=? AND p.active=1 AND o.status='approved'",actor.id);ensure(items.length>0,409,'CART_EMPTY');const organization=await first(db,'SELECT country FROM den_organizations WHERE id=?',items[0].organization_id);ensure(address.country===organization.country,409,'DOMESTIC_DELIVERY_ONLY');ensure(items.every(p=>p.organization_id===items[0].organization_id&&p.currency===items[0].currency),409,'ONE_ORGANIZATION_AND_CURRENCY_REQUIRED');
+  const orderId=id(),code=String(crypto.getRandomValues(new Uint32Array(1))[0]%100000).padStart(5,'0'),cash=body.deliveryPayment==='cash'?String((Number(code)+1+crypto.getRandomValues(new Uint32Array(1))[0]%99999)%100000).padStart(5,'0'):null,total=items.reduce((sum,p)=>sum+p.price_minor*p.quantity,0),pickup=randomToken();
+  const statements=[guard('(SELECT COUNT(*) FROM den_cart WHERE user_id=?)=?',actor.id,items.length),guard("EXISTS(SELECT 1 FROM den_organizations WHERE id=? AND status='approved')",items[0].organization_id),q(db,'INSERT INTO den_orders(id,consumer_id,organization_id,address,product_total,currency,product_payment,delivery_payment,cash_hash,delivery_hash,pickup_token,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',orderId,actor.id,items[0].organization_id,address.address,total,items[0].currency,'sandbox_digital_paid',cash?'cash_due':'sandbox_digital_due',cash?await hashToken(cash):null,await hashToken(code),pickup,now)];
+  for(const p of items)statements.push(guard('EXISTS(SELECT 1 FROM den_cart WHERE user_id=? AND product_id=? AND quantity=?)',actor.id,p.id,p.quantity),guard('EXISTS(SELECT 1 FROM den_products WHERE id=? AND active=1 AND stock>=? AND price_minor=? AND currency=?)',p.id,p.quantity,p.price_minor,p.currency),q(db,'UPDATE den_products SET stock=stock-? WHERE id=?',p.quantity,p.id),q(db,'INSERT INTO den_order_lines VALUES(?,?,?,?,?)',orderId,p.id,p.name,p.quantity,p.price_minor));
+  statements.push(q(db,'INSERT INTO den_order_secrets VALUES(?,?,?)',orderId,code,cash),q(db,'DELETE FROM den_cart WHERE user_id=?',actor.id));await audit('order.sandbox_placed',{orderId,total},statements);return response({id:orderId,sandbox:true},201);
+ }
+ if(route==='orders'&&method==='GET')return response({orders:await all(db,"SELECT g.name AS organization_name,o.id,o.consumer_id,o.organization_id,o.rider_id,o.state,o.ready,o.product_total,o.currency,o.delivery_payment,o.created_at FROM den_orders o JOIN den_organizations g ON g.id=o.organization_id WHERE o.consumer_id=? OR g.owner_id=? OR o.rider_id=? OR (o.rider_id IS NULL AND EXISTS(SELECT 1 FROM den_riders WHERE user_id=? AND status='approved')) ORDER BY o.created_at DESC",actor.id,actor.id,actor.id,actor.id)});
+ const om=route.match(/^orders\/([^/]+)(?:\/([^/]+))?$/);
+ if(om) {
+  const order=await first(db,'SELECT o.*,g.owner_id,g.status AS organization_status FROM den_orders o JOIN den_organizations g ON g.id=o.organization_id WHERE o.id=?',om[1]);ensure(order,404,'ORDER_NOT_FOUND');const consumer=order.consumer_id===actor.id,owner=order.owner_id===actor.id,rider=order.rider_id===actor.id,action=om[2];
+  if(method==='GET'){ensure(consumer||owner||rider,404,'ORDER_NOT_FOUND');const lines=await all(db,'SELECT * FROM den_order_lines WHERE order_id=?',order.id),safe={id:order.id,state:order.state,ready:Boolean(order.ready),handoff:Boolean(order.handoff),orgScanned:Boolean(order.org_scanned),productTotal:order.product_total,currency:order.currency,productPayment:order.product_payment,deliveryPayment:order.delivery_payment,sandbox:true,lines,address:order.address};if(action==='receipt')return response({receipt:{...safe,deliveryAmount:null,deliveryNote:'Delivery rates are not configured. Sandbox only; no funds collected.'}});if(consumer){const secrets=await first(db,'SELECT * FROM den_order_secrets WHERE order_id=?',order.id);safe.deliveryCode=secrets.delivery_code;safe.cashCode=secrets.cash_code;}if(owner)safe.organizationQr=order.pickup_token;if(rider&&order.code_verified&&order.qr_expires_at>now)safe.deliveryQr=order.completion_token;return response({order:safe});}
+  ensure(method==='POST',405,'METHOD_NOT_ALLOWED');const statements=[];
+  if(rider)ensure(await first(db,"SELECT user_id FROM den_riders WHERE user_id=? AND status='approved'",actor.id),403,'APPROVED_RIDER_REQUIRED');
+  if(owner)ensure(order.organization_status==='approved',403,'APPROVED_ORGANIZATION_REQUIRED');
+  async function limitCode(){const key=`platform-code:${order.id}:${actor.id}:${Math.floor(now/900000)}`;const attempt=await first(db,'INSERT INTO den_rate_buckets(key,count,expires_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count',key,now+900000);ensure(attempt.count<=5,429,'CODE_ATTEMPTS_EXCEEDED');}
+  if(action==='reserve'){ensure(await first(db,"SELECT user_id FROM den_riders WHERE user_id=? AND status='approved'",actor.id),403,'APPROVED_RIDER_REQUIRED');ensure(order.organization_status==='approved',409,'ORGANIZATION_NOT_APPROVED');statements.push(guard("EXISTS(SELECT 1 FROM den_orders WHERE id=? AND rider_id IS NULL AND state='placed')",order.id),guard("EXISTS(SELECT 1 FROM den_riders WHERE user_id=? AND status='approved')",actor.id),q(db,"UPDATE den_orders SET rider_id=?,state='reserved' WHERE id=?",actor.id,order.id));}
+  else if(action==='release'){ensure(rider&&order.state==='reserved',403,'RESERVED_RIDER_REQUIRED');statements.push(q(db,"UPDATE den_orders SET rider_id=NULL,state='placed',org_scanned=0,handoff=0 WHERE id=? AND state='reserved'",order.id));}
+  else if(action==='ready'){ensure(owner&&order.organization_status==='approved'&&['placed','reserved'].includes(order.state),403,'OWNER_REQUIRED');statements.push(q(db,'UPDATE den_orders SET ready=1 WHERE id=?',order.id));}
+  else if(action==='organization-scan'){ensure(rider&&order.state==='reserved'&&await constantTimeEqual(body.token??'',order.pickup_token),403,'INVALID_ORGANIZATION_QR');statements.push(q(db,'UPDATE den_orders SET org_scanned=1 WHERE id=?',order.id));}
+  else if(action==='handoff'){ensure(owner&&order.ready&&order.org_scanned&&order.state==='reserved',409,'HANDOFF_REQUIREMENTS_NOT_MET');statements.push(q(db,'UPDATE den_orders SET handoff=1 WHERE id=?',order.id));}
+  else if(action==='pickup'){ensure(rider&&order.ready&&order.org_scanned&&order.handoff&&order.state==='reserved',409,'PICKUP_REQUIREMENTS_NOT_MET');statements.push(q(db,"UPDATE den_orders SET state='picked_up' WHERE id=?",order.id));}
+  else if(action==='cash-confirm'){await limitCode();ensure(rider&&order.state==='picked_up'&&order.delivery_payment==='cash_due'&&await constantTimeEqual(await hashToken(body.code??''),order.cash_hash),403,'INVALID_CASH_CONFIRMATION');statements.push(q(db,"UPDATE den_orders SET delivery_payment='cash_confirmed' WHERE id=?",order.id));}
+  else if(action==='delivery-code'){await limitCode();ensure(rider&&order.state==='picked_up'&&await constantTimeEqual(await hashToken(body.code??''),order.delivery_hash),403,'INVALID_DELIVERY_CODE');statements.push(q(db,'UPDATE den_orders SET code_verified=1,completion_token=?,qr_expires_at=? WHERE id=?',randomToken(),now+120000,order.id));}
+  else if(action==='complete'){ensure(consumer&&order.state==='picked_up'&&order.code_verified&&order.qr_expires_at>now&&await constantTimeEqual(body.token??'',order.completion_token??''),403,'INVALID_DELIVERY_QR');ensure(order.delivery_payment==='cash_confirmed'||(order.delivery_payment==='sandbox_digital_due'&&env.DEN_SANDBOX_PAYMENTS==='true'),409,'DELIVERY_PAYMENT_REQUIRED');statements.push(q(db,"UPDATE den_orders SET state='delivered',delivered_at=?,delivery_payment=CASE WHEN delivery_payment='sandbox_digital_due' THEN 'sandbox_digital_paid' ELSE delivery_payment END,completion_token=NULL WHERE id=?",now,order.id));}
+  else ensure(false,404,'ROUTE_NOT_FOUND');
+  statements.unshift(guard('EXISTS(SELECT 1 FROM den_orders WHERE id=? AND state=? AND rider_id IS ? AND ready=? AND org_scanned=? AND handoff=? AND code_verified=? AND delivery_payment=? AND completion_token IS ?)',order.id,order.state,order.rider_id,order.ready,order.org_scanned,order.handoff,order.code_verified,order.delivery_payment,order.completion_token));
+  if(rider)statements.unshift(guard("EXISTS(SELECT 1 FROM den_riders WHERE user_id=? AND status='approved')",actor.id));
+  if(owner)statements.unshift(guard("EXISTS(SELECT 1 FROM den_organizations WHERE id=? AND status='approved')",order.organization_id));
+  await audit(`order.${action}`,{orderId:order.id},statements);return response({ok:true});
+ }
+ if(route==='notifications'&&method==='GET')return response({notifications:await all(db,'SELECT * FROM den_notifications WHERE user_id=? ORDER BY created_at DESC',actor.id)});
+ if(route==='stats'&&method==='GET')return response({orders:await first(db,'SELECT COUNT(*) AS total,COALESCE(SUM(state=\'delivered\'),0) AS delivered FROM den_orders WHERE consumer_id=?',actor.id)});
+ return response({error:'NOT_FOUND'},404);
+}
