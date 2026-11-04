@@ -15,6 +15,7 @@ async function fixture(t) {
   await DB.prepare('INSERT INTO den_users(id,auth_subject,created_at) VALUES(?,?,?)').bind(id,id,now).run();
   await DB.prepare('INSERT INTO den_credentials(user_id,email,display_name,password_hash) VALUES(?,?,?,?)').bind(id,address,id,hash).run();
  }
+ for(const id of ['owner','other','staff'])await DB.prepare('INSERT INTO den_workspace_choices VALUES(?,?,?)').bind(id,'warehouse',now).run();
  await DB.prepare("INSERT INTO den_admin_accounts VALUES('admin','primary_super_admin','[]')").run();
  const client=()=>({cookie:'',csrf:'',async request(path,method='GET',body,extra={}){
   const result=await handleRequest(new Request(origin+path,{method,headers:{origin,'content-type':'application/json',...(this.cookie?{cookie:this.cookie}:{}),...(this.csrf?{'x-csrf-token':this.csrf}:{}),...extra},...(body===undefined?{}:{body:JSON.stringify(body)})}),env);

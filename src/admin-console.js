@@ -19,6 +19,7 @@ export async function enforceAdminPage(env,actor,page){
  ensure(page!=='locks',403,'OWNER_ONLY');
  const lock=await env.DB.prepare('SELECT locked FROM den_admin_page_locks WHERE page=?').bind(page).first();
  ensure(!lock?.locked,403,'PAGE_LOCKED_BY_OWNER');
+ if(['accounts','roles'].includes(page))ensure(owner,403,'OWNER_ONLY');
  if(actor.level==='lesser_super_admin')return;
  const allowed={overview:['security_audit_admin'],finance:['finance_admin'],audit:['security_audit_admin'],verification:['organization_verification_admin','rider_verification_admin','warehouse.review'],trade:['international_trade_admin']};
  ensure((allowed[page]??[]).some(p=>actor.permissions.includes(p)),403,'PERMISSION_DENIED');
@@ -47,6 +48,7 @@ export async function handleAdminConsole(request,env,actor,h){
  if(route==='audit'&&method==='GET')return response({events:await all(db,'SELECT sequence,actor_id,action,occurred_at,payload FROM den_audit_events ORDER BY sequence DESC LIMIT 100')});
  if(route==='finance'&&method==='GET')return response({totals:await all(db,'SELECT currency,COUNT(*) AS entries,SUM(amount_minor) AS net_minor FROM den_service_wallet_entries GROUP BY currency'),entries:await all(db,'SELECT id,user_id,currency,amount_minor,reference,created_at FROM den_service_wallet_entries ORDER BY created_at DESC LIMIT 100'),livePaymentsEnabled:false});
  if(route==='roles'){
+  ensure(owner,403,'OWNER_ONLY');
   if(method==='GET')return response({roles:await all(db,'SELECT * FROM den_admin_role_templates'),permissions:adminPermissions});
   if(method==='POST'){
    ensure(owner||actor.level==='lesser_super_admin',403,'SUPER_ADMIN_REQUIRED');
@@ -71,6 +73,7 @@ export async function handleAdminConsole(request,env,actor,h){
   await audit('admin.page_lock_changed',{page:body.page,locked:body.locked},[guard('COALESCE((SELECT revision FROM den_admin_page_locks WHERE page=?),0)=?',body.page,body.revision),q(db,'INSERT INTO den_admin_page_locks VALUES(?,?,?,?,?) ON CONFLICT(page) DO UPDATE SET locked=excluded.locked,revision=excluded.revision,changed_by=excluded.changed_by,changed_at=excluded.changed_at',body.page,body.locked?1:0,body.revision+1,actor.id,now)]);return response({ok:true});
  }
  if(route==='accounts'){
+  ensure(owner,403,'OWNER_ONLY');
   if(method==='GET')return response({accounts:await all(db,'SELECT a.user_id,a.level,c.email,c.display_name,r.role_id,t.name AS role_name FROM den_admin_accounts a JOIN den_credentials c ON c.user_id=a.user_id LEFT JOIN den_admin_role_assignments r ON r.user_id=a.user_id LEFT JOIN den_admin_role_templates t ON t.id=r.role_id')});
   if(method==='POST'){
    ensure(owner||actor.level==='lesser_super_admin',403,'SUPER_ADMIN_REQUIRED');

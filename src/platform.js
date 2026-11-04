@@ -34,7 +34,7 @@ export async function handlePlatform(request,env,actor,h) {
   if(method==='POST'){ensure(!await first(db,'SELECT id FROM den_organizations WHERE owner_id=?',actor.id),409,'MANAGER_RIDER_CONFLICT');await audit('rider.submitted',{},[q(db,'INSERT INTO den_riders(user_id,vehicle,created_at) VALUES(?,?,?)',actor.id,text(body.vehicle,'vehicle',100),now)]);return response({status:'pending'},201);}
  }
  if(route==='admin/accounts') {
-  freshAdmin(actor,env,'admins.manage');ensure(actor.id===env.PRIMARY_ADMIN_ID||actor.adminLevel==='lesser_super_admin',403,'SUPER_ADMIN_REQUIRED');
+  freshAdmin(actor,env,'admins.manage');ensure(actor.id===env.PRIMARY_ADMIN_ID,403,'OWNER_ONLY');
   if(method==='GET')return response({accounts:await all(db,'SELECT a.user_id,a.level,a.permissions,c.email,c.display_name FROM den_admin_accounts a JOIN den_credentials c ON c.user_id=a.user_id')});
   if(method==='POST'){
    const targetId=text(body.userId,'userId'),target=await first(db,'SELECT u.id,a.level FROM den_users u LEFT JOIN den_admin_accounts a ON a.user_id=u.id WHERE u.id=?',targetId);ensure(target,404,'USER_NOT_FOUND');
