@@ -3,7 +3,7 @@ import {openLocalDatabase} from '../src/local-database.js';
 import {createAuditRecord,auditGenesis} from '../src/audit.js';
 import {hashPassword} from '../src/security.js';
 import {email,password} from '../src/http.js';
-import {readFileSync,writeFileSync,existsSync,mkdirSync} from 'node:fs';
+import {readFileSync,writeFileSync,existsSync,mkdirSync,renameSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {createInterface} from 'node:readline/promises';
 if(!process.stdin.isTTY)throw new Error('Run owner setup in an interactive terminal.');
@@ -25,6 +25,6 @@ try{
  const record=await createAuditRecord({sequence:(head?.sequence??0)+1,actorId:id,action:'admin.owner_bootstrapped',occurredAt:now,payload:JSON.stringify({replacedLocalTestOwner:Boolean(previous)}),previousHash:head?.event_hash??auditGenesis});
  db.sqlite.exec('BEGIN IMMEDIATE');try{if(previous){db.sqlite.prepare('DELETE FROM den_admin_role_assignments WHERE user_id=?').run(config.primaryAdminId);db.sqlite.prepare('DELETE FROM den_admin_accounts WHERE user_id=?').run(config.primaryAdminId);db.sqlite.prepare('DELETE FROM den_sessions WHERE user_id=?').run(config.primaryAdminId);}
  db.sqlite.prepare('INSERT INTO den_users(id,auth_subject,created_at) VALUES(?,?,?)').run(id,`password:${id}`,now);db.sqlite.prepare('INSERT INTO den_credentials(user_id,email,display_name,password_hash) VALUES(?,?,?,?)').run(id,address,'Owner Admin',hash);db.sqlite.prepare('INSERT INTO den_admin_accounts VALUES(?,?,?)').run(id,'primary_super_admin','["roles.assign"]');db.sqlite.prepare('INSERT INTO den_audit_events(sequence,actor_id,action,occurred_at,payload,previous_hash,event_hash) VALUES(?,?,?,?,?,?,?)').run(record.sequence,id,record.action,now,record.payload,record.previousHash,record.eventHash);db.sqlite.exec('COMMIT');}catch(e){db.sqlite.exec('ROLLBACK');throw e;}
- config.primaryAdminId=id;writeFileSync(configPath,JSON.stringify(config),{mode:0o600});
- console.log('Owner Admin created locally. Restart the API, sign in at /admin/, and enable MFA in Security. No cloud account was modified.');
+ config.primaryAdminId=id;writeFileSync(configPath+'.next',JSON.stringify(config),{mode:0o600});renameSync(configPath+'.next',configPath);
+ console.log('Owner Admin created locally. Sign in at /admin/ and enable MFA in Security. The updated local API reads the owner identity on each request. No cloud account was modified.');
 }finally{db.close();}

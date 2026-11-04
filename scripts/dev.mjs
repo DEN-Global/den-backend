@@ -27,7 +27,7 @@ const server=createServer(async(req,res)=>{
    res.writeHead(200,{'content-type':types[extname(file)]??'application/octet-stream','x-content-type-options':'nosniff','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"});res.end(readFileSync(file));return;
   }
   const request=new Request(url,{method:req.method,headers,...(!['GET','HEAD'].includes(req.method)?{body:Readable.toWeb(req),duplex:'half'}:{})});
-  const result=await handleRequest(request,{DB,APP_ORIGIN:process.env.DEN_APP_ORIGIN??origin,MFA_ENCRYPTION_KEY:config.mfaKey,PRIMARY_ADMIN_ID:config.primaryAdminId,DEN_SANDBOX_PAYMENTS:process.env.DEN_SANDBOX_PAYMENTS??'false'});
+  const result=await handleRequest(request,{DB,APP_ORIGIN:process.env.DEN_APP_ORIGIN??origin,MFA_ENCRYPTION_KEY:config.mfaKey,PRIMARY_ADMIN_ID:JSON.parse(readFileSync(configPath,'utf8')).primaryAdminId,DEN_SANDBOX_PAYMENTS:process.env.DEN_SANDBOX_PAYMENTS??'false'});
   res.writeHead(result.status,Object.fromEntries(result.headers));res.end(Buffer.from(await result.arrayBuffer()));
  }catch{res.writeHead(500);res.end('Request failed');}
 });
