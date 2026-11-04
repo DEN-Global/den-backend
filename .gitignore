@@ -4,3 +4,7 @@ node_modules/
 !.env.example
 .wrangler/
 coverage/
+.data/
+.cloudflare/
+.build/
+.dev.vars

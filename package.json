@@ -4,10 +4,25 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=24.22.0"
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/policy.js && node --check src/audit.js"
+    "check": "node --check src/policy.js && node --check src/audit.js && node --check src/app.js && node --check src/security.js && node --check src/http.js && node --check src/local-database.js",
+    "dev": "node scripts/dev.mjs",
+    "build:worker": "node scripts/build-worker.mjs",
+    "test:runtime": "node --test test/runtime.test.js",
+    "build": "cf build --mode development"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "2.0.0-beta.v.11",
+    "cf": "1.0.0-beta.27",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261103.0-beta",
+    "node": "24.22.0",
+    "vite": "8.3.5"
+  },
+  "dependencies": {
+    "otpauth": "9.6.0"
   }
 }

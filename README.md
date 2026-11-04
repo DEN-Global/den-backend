@@ -1,49 +1,53 @@
-# DEN backend
+# DEN shared backend
 
-**One Network. Every Journey.**
+Authenticated warehouse partner API and shared DEN domain policies. This is a working development slice, not the completed ecosystem or a production launch.
 
-Initial shared domain policy and persistence implementation for DEN Global. This is a tested library, not a deployed API or a complete application.
+## Run locally
 
-## Run checks
-
-Node.js 24 or later; no external packages or secrets required.
+Use Node 24.22 or later. Keep `den-backend` and `den-warehouse` as sibling directories.
 
 ```sh
+npm ci
 npm test
 npm run check
+npm run build
+npm run dev
 ```
+
+Build the warehouse frontend first (`npm ci && npm run build` in its directory). Open http://localhost:8787. Local SQLite data survives restarts in ignored `.data/`; its generated encryption key is stored with restrictive file permissions. These are development credentials and must never be copied into production.
+
+Register a local test reviewer, then explicitly provision the first local Primary:
+
+```sh
+DEN_ALLOW_LOCAL_ADMIN_PROVISION=1 node scripts/local-admin.mjs reviewer@example.test
+```
+
+Restart the local server after this command. Enroll MFA in Security before reviewing applications. This CLI only touches the local SQLite file; no public administrator bootstrap endpoint exists.
 
 ## Implemented
 
-- Default-locked international trade policy with exclusive Primary Super Admin identity checks, MFA evidence and five-minute authentication freshness.
-- Revision preconditions and audit event generation for activation/relocking.
-- Country controls, explicit permissions, tenant-scoped history and controlled in-progress continuation.
-- Three specialized international role assignment policy, available only after activation.
-- Six facility employee roles with tenant/facility isolation and multiple membership support.
-- Warehouse business 30-day commission holiday, approved country/currency pricing selection, rejection of overlapping rules, and exact minor-unit calculations.
+- Password authentication with scrypt, server-side hashed sessions, CSRF/origin checks, bounded JSON, rate limits, logout, encrypted TOTP enrollment and fresh MFA authorization.
+- Pending business registration, facility creation/editing, submission, independent administrative business and facility approval, and tenant isolation.
+- Email-bound, expiring, single-use staff invitations with revocation; six facility roles and owner-controlled removal. Invitation delivery is manual in development.
+- Permission-checked, immutable operational notes with idempotency. Notes do not move inventory or establish secure custody.
+- Atomic audit chaining and concurrent-write guards. SQL protects business activation dates and append-only records.
+- Default-locked trade controls with authenticated Primary identity, fresh MFA and revision comparison. Specialized roles confer no unlock authority.
+- Shared policies for 30-day business commission holiday, progressive commissions, account modes, rider communities, chat routing and collection eligibility. Example rates are test fixtures, not activated billing.
 
-- Protected Primary/Lesser Super Admin hierarchy and ordinary-admin boundaries.
-- Configurable marginal progressive commission calculations.
-- Automatic collection eligibility: explicit enablement, seven days after notice, scoped valid mandate, disputes/holds and amount limits.
-- Public account-mode exclusion, five-community rider limit and permitted private-chat routing.
+## Verification
 
-- Additive SQL migration with business verification uniqueness, immutable activation time, facility/tenant references, international booking lock, custody idempotency and append-only event/audit triggers.
-- SHA-256 audit chaining and verification against a trusted external checkpoint.
+54 automated tests cover policies, SQL constraints, actual HTTP flows, negative authorization cases, concurrency, restart persistence, and the Worker running on workerd with D1 and real password hashing. `npm run build` validates the Cloudflare Vite/cf bundle. See [warehouse acceptance](docs/warehouse-acceptance.md), [requirements](docs/master-requirements.md) and [decisions](docs/decisions.md).
 
-See [persistence and Cloudflare integration](docs/persistence-and-cloudflare.md) for limitations and the next integration steps.
+## Production boundaries
 
-## Security boundary and remaining work
+No remote resources have been provisioned. `cf` configuration requires explicit database ID, origin and Primary identity outside development. Cloudflare authentication and reviewed environment configuration are still required. The local Node/SQLite adapter is not part of the Worker bundle.
 
-Do not expose these functions directly to clients. An authenticated backend must construct actors and load permissions, memberships, conversation participants, admin levels, business approval timestamps and pricing approval records from trusted storage. Never trust client-supplied MFA claims, primary identity, approval status or business activation dates.
+Email ownership verification, password/account recovery, MFA recovery, production administrator provisioning, independent audit checkpoints, security monitoring and a reviewed launch configuration remain unfinished. Do not open public onboarding before these are implemented. No live identity verification, documents, payments, carrier, maps, legal approvals or automatic deductions are connected.
 
-Community joins must enforce the cap in an atomic transaction. Chat routing must also validate active conversation membership, order/customer/rider assignments and organization tenancy on every send/read. Progressive schedule selection must validate country, currency, effective dates and plan before calculation. Collection still needs authenticated finance approvals, idempotent provider integration, reconciled invoice state and mandate validation from trusted records.
+Inventory accounting, full shipment/custody transitions, offline synchronization, QR/code handoffs, consumer/rider/merchant apps, complete finance/admin portals and the wider master requirements remain to be built. The international booking endpoint fails closed; unlocking alone cannot create live bookings.
 
-The authentication provider, MFA challenge flow, provisioned database, transaction adapter, independently checkpointed audit storage, rate limits and HTTP endpoint integration are not implemented yet. Policy audit outputs require transactional persistence; the schema and chain verifier do not themselves publish trusted external checkpoints. Revision checks require atomic database compare-and-swap when integrated. For booking/payment creation, recheck lock revision and country flags in the same transaction as the new operation. Persist authorization and role assignments atomically as well.
+## Deployment and rollback
 
-The commission function receives the business activation timestamp; database uniqueness for verified businesses and immutable first activation are defined in the migration; canonical business verification and transactional approval endpoints are still required to prevent free-period resets. Example rates exist only in tests; no production rate or deductions are activated. Holiday calculations use elapsed 30×24 hours in UTC and apply to eligible new transactions at their transaction time.
+Use separate development, staging and production databases and keys. Review and apply additive migrations in order after backup; never point local tests at production. Configure same-origin frontend assets/API, secret MFA key, trusted Primary identity, cookie HTTPS and origin before deployment. No deploy command is executed by this repository automatically.
 
-All dashboards, consumer/rider/seller applications, payments, warehouse operations, tracking, twelve signature upgrades, competitor verification and Cloudflare deployment remain pending. Read [requirements](docs/master-requirements.md) and [decisions](docs/decisions.md).
-
-## Rollback
-
-This repository is new and has no deployed resources or database changes. Disable use of this package or revert its consuming release to roll back. Do not remove historical data or drop future additive schema changes as an automatic rollback operation.
+Rollback application code to the previous known build. Preserve database history and audit records; do not drop migrations or erase data to roll back. Test backup restoration and forward fixes in staging before any production migration.
