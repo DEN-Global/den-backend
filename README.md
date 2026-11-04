@@ -22,9 +22,16 @@ npm run check
 - Six facility employee roles with tenant/facility isolation and multiple membership support.
 - Warehouse business 30-day commission holiday, approved country/currency pricing selection, rejection of overlapping rules, and exact minor-unit calculations.
 
+- Protected Primary/Lesser Super Admin hierarchy and ordinary-admin boundaries.
+- Configurable marginal progressive commission calculations.
+- Automatic collection eligibility: explicit enablement, seven days after notice, scoped valid mandate, disputes/holds and amount limits.
+- Public account-mode exclusion, five-community rider limit and permitted private-chat routing.
+
 ## Security boundary and remaining work
 
-Do not expose these functions directly to clients. An authenticated backend must construct actors and load permissions, memberships, business approval timestamps and pricing approval records from trusted storage. Never trust client-supplied MFA claims, primary identity, approval status or business activation dates.
+Do not expose these functions directly to clients. An authenticated backend must construct actors and load permissions, memberships, conversation participants, admin levels, business approval timestamps and pricing approval records from trusted storage. Never trust client-supplied MFA claims, primary identity, approval status or business activation dates.
+
+Community joins must enforce the cap in an atomic transaction. Chat routing must also validate active conversation membership, order/customer/rider assignments and organization tenancy on every send/read. Progressive schedule selection must validate country, currency, effective dates and plan before calculation. Collection still needs authenticated finance approvals, idempotent provider integration, reconciled invoice state and mandate validation from trusted records.
 
 The authentication provider, MFA challenge flow, persistent database, transaction adapter, tamper-evident audit storage, rate limits and HTTP endpoint integration are not implemented yet. Policy audit outputs are not immutable audit records. Revision checks require atomic database compare-and-swap when integrated. For booking/payment creation, recheck lock revision and country flags in the same transaction as the new operation. Persist authorization and role assignments atomically as well.
 
