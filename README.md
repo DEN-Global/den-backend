@@ -2,7 +2,7 @@
 
 **One Network. Every Journey.**
 
-Initial shared domain policy implementation for DEN Global. This is a tested library, not a deployed API or a complete application.
+Initial shared domain policy and persistence implementation for DEN Global. This is a tested library, not a deployed API or a complete application.
 
 ## Run checks
 
@@ -27,15 +27,20 @@ npm run check
 - Automatic collection eligibility: explicit enablement, seven days after notice, scoped valid mandate, disputes/holds and amount limits.
 - Public account-mode exclusion, five-community rider limit and permitted private-chat routing.
 
+- Additive SQL migration with business verification uniqueness, immutable activation time, facility/tenant references, international booking lock, custody idempotency and append-only event/audit triggers.
+- SHA-256 audit chaining and verification against a trusted external checkpoint.
+
+See [persistence and Cloudflare integration](docs/persistence-and-cloudflare.md) for limitations and the next integration steps.
+
 ## Security boundary and remaining work
 
 Do not expose these functions directly to clients. An authenticated backend must construct actors and load permissions, memberships, conversation participants, admin levels, business approval timestamps and pricing approval records from trusted storage. Never trust client-supplied MFA claims, primary identity, approval status or business activation dates.
 
 Community joins must enforce the cap in an atomic transaction. Chat routing must also validate active conversation membership, order/customer/rider assignments and organization tenancy on every send/read. Progressive schedule selection must validate country, currency, effective dates and plan before calculation. Collection still needs authenticated finance approvals, idempotent provider integration, reconciled invoice state and mandate validation from trusted records.
 
-The authentication provider, MFA challenge flow, persistent database, transaction adapter, tamper-evident audit storage, rate limits and HTTP endpoint integration are not implemented yet. Policy audit outputs are not immutable audit records. Revision checks require atomic database compare-and-swap when integrated. For booking/payment creation, recheck lock revision and country flags in the same transaction as the new operation. Persist authorization and role assignments atomically as well.
+The authentication provider, MFA challenge flow, provisioned database, transaction adapter, independently checkpointed audit storage, rate limits and HTTP endpoint integration are not implemented yet. Policy audit outputs require transactional persistence; the schema and chain verifier do not themselves publish trusted external checkpoints. Revision checks require atomic database compare-and-swap when integrated. For booking/payment creation, recheck lock revision and country flags in the same transaction as the new operation. Persist authorization and role assignments atomically as well.
 
-The commission function receives the business activation timestamp; database uniqueness for verified businesses and immutable first activation are still required to prevent free-period resets. Example rates exist only in tests; no production rate or deductions are activated. Holiday calculations use elapsed 30×24 hours in UTC and apply to eligible new transactions at their transaction time.
+The commission function receives the business activation timestamp; database uniqueness for verified businesses and immutable first activation are defined in the migration; canonical business verification and transactional approval endpoints are still required to prevent free-period resets. Example rates exist only in tests; no production rate or deductions are activated. Holiday calculations use elapsed 30×24 hours in UTC and apply to eligible new transactions at their transaction time.
 
 All dashboards, consumer/rider/seller applications, payments, warehouse operations, tracking, twelve signature upgrades, competitor verification and Cloudflare deployment remain pending. Read [requirements](docs/master-requirements.md) and [decisions](docs/decisions.md).
 
