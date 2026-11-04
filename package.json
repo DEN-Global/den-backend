@@ -12,7 +12,8 @@
     "dev": "node scripts/dev.mjs",
     "build:worker": "node scripts/build-worker.mjs",
     "test:runtime": "node --test test/runtime.test.js",
-    "build": "cf build --mode development"
+    "build": "cf build --mode development",
+    "setup:owner": "node scripts/setup-owner.mjs"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "2.0.0-beta.v.11",

@@ -1,3 +1,4 @@
+import {handleAdminConsole,enforceAdminPage,adminSection} from './admin-console.js';
 import {handleCommunity} from './community.js';
 import { handleServices } from './services-api.js';
 import { handlePlatform } from './platform.js';
@@ -16,7 +17,7 @@ const run=(db,sql,...args)=>q(db,sql,...args).run();
 const nowOf=env=>env.CLOCK?.now?.() ?? Date.now();
 const cookie=(request)=>request.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('den_session='))?.slice(12);
 const sessionCookie=(token,request,age=28800)=>`den_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${new URL(request.url).protocol==='https:'?'; Secure':''}`;
-const publicUser=u=>({id:u.id,email:u.email,name:u.display_name,adminLevel:u.level??null,mfaEnabled:Boolean(u.totp_enabled)});
+const publicUser=u=>({id:u.id,email:u.email,name:u.display_name,adminLevel:u.level??null,mfaEnabled:Boolean(u.totp_enabled),adminRole:u.roleName??null,permissions:u.permissions??[]});
 async function rateLimit(env,key,limit,windowMs) {
  const now=nowOf(env), bucket=`${Math.floor(now/windowMs)}:${await hashToken(key)}`;
  const result=await first(env.DB,'INSERT INTO den_rate_buckets(key,count,expires_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count',bucket,now+windowMs);
@@ -27,9 +28,11 @@ async function session(request,env) {
  const token=cookie(request);ensure(token,401,'SIGN_IN_REQUIRED');
  const s=await first(env.DB,`SELECT s.*,u.status,c.email,c.display_name,c.totp_enabled,c.totp_secret,c.last_totp_counter,a.level,a.permissions FROM den_sessions s JOIN den_users u ON u.id=s.user_id JOIN den_credentials c ON c.user_id=u.id LEFT JOIN den_admin_accounts a ON a.user_id=u.id WHERE s.token_hash=? AND s.expires_at>?`,await hashToken(token),nowOf(env));
  ensure(s?.status==='active',401,'SESSION_EXPIRED');
- return {...s,id:s.user_id,authenticated:true,authenticatedAt:s.authenticated_at,mfaVerified:Boolean(s.mfa_at && nowOf(env)-s.mfa_at<=300000),adminLevel:s.level,permissions:JSON.parse(s.permissions??'[]')};
+ const assignment=await first(env.DB,'SELECT t.name,t.permissions,t.revision,t.id FROM den_admin_role_assignments r JOIN den_admin_role_templates t ON t.id=r.role_id WHERE r.user_id=?',s.user_id);
+ return {...s,roleName:assignment?.name??null,roleId:assignment?.id??null,roleRevision:assignment?.revision??null,id:s.user_id,authenticated:true,authenticatedAt:s.authenticated_at,mfaVerified:Boolean(s.mfa_at && nowOf(env)-s.mfa_at<=300000),adminLevel:s.level,permissions:JSON.parse(assignment?.permissions??s.permissions??'[]')};
 }
 async function auditBatch(env,actor,action,payload,statements) {
+ if(actor.adminSection&&actor.id!==env.PRIMARY_ADMIN_ID){statements=[q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,NOT EXISTS(SELECT 1 FROM den_admin_page_locks WHERE page=? AND locked=1))',crypto.randomUUID(),actor.adminSection),q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,EXISTS(SELECT 1 FROM den_sessions WHERE token_hash=?))',crypto.randomUUID(),actor.token_hash),...statements];}
  const head=await first(env.DB,'SELECT sequence,event_hash FROM den_audit_events ORDER BY sequence DESC LIMIT 1');
  const record=await createAuditRecord({sequence:(head?.sequence??0)+1,actorId:actor.id,action,occurredAt:nowOf(env),payload:JSON.stringify(payload),previousHash:head?.event_hash??auditGenesis});
  // A duplicate sequence/hash from a concurrent append makes D1 roll back the entire batch.
@@ -97,6 +100,7 @@ export async function handleRequest(request,env) {
   }
   const actor=await session(request,env);
   if(method!=='GET') ensure(await constantTimeEqual(request.headers.get('x-csrf-token'),actor.csrf_token),403,'CSRF_REJECTED');
+  const section=adminSection(path);if(section){await enforceAdminPage(env,actor,section);actor.adminSection=section;}
   if(path==='/api/auth/me'&&method==='GET')return response({user:publicUser(actor),csrfToken:actor.csrf_token,freshMfa:actor.mfaVerified});
   if(path==='/api/auth/logout'&&method==='POST'){await run(db,'DELETE FROM den_sessions WHERE token_hash=?',actor.token_hash);return response({ok:true},200,{'set-cookie':sessionCookie('',request,0)});}
   if(path==='/api/auth/mfa/setup'&&method==='POST') {
@@ -136,6 +140,7 @@ export async function handleRequest(request,env) {
    return response(transition.state);
   }
   const helpers={q,first,all,run,auditBatch,nowOf,freshAdmin};
+  const consoleResult=await handleAdminConsole(request,env,actor,helpers);if(consoleResult)return consoleResult;
   const platformResult=await handlePlatform(request,env,actor,helpers);if(platformResult)return platformResult;
   const communityResult=await handleCommunity(request,env,actor,helpers);if(communityResult)return communityResult;
   const serviceResult=await handleServices(request,env,actor,helpers);if(serviceResult)return serviceResult;
