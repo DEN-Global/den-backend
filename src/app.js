@@ -5,6 +5,7 @@ import {handleCommunity} from './community.js';
 import { handleServices } from './services-api.js';
 import { handlePlatform } from './platform.js';
 import { handleMobility } from './mobility.js';
+import { handlePets,handleAdminPets } from './pets.js';
 import { response, readJson, ensure, text, email, password as passwordValue, HttpError } from './http.js';
 import { randomToken, hashToken, hashPassword, verifyPassword, encryptSecret, decryptSecret, newTotp, checkTotp, constantTimeEqual } from './security.js';
 import { createAuditRecord, auditGenesis } from './audit.js';
@@ -154,6 +155,8 @@ export async function handleRequest(request,env) {
    return response(transition.state);
   }
   const helpers={q,first,all,run,auditBatch,nowOf,freshAdmin};
+  const adminPetResult=await handleAdminPets(request,env,actor,helpers);if(adminPetResult)return adminPetResult;
+  const petResult=await handlePets(request,env,actor,helpers);if(petResult)return petResult;
   const workspaceResult=await handleWorkspaceAccess(request,env,actor,helpers);if(workspaceResult)return workspaceResult;
   const consoleResult=await handleAdminConsole(request,env,actor,helpers);if(consoleResult)return consoleResult;
   const platformResult=await handlePlatform(request,env,actor,helpers);if(platformResult)return platformResult;

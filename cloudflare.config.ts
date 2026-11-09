@@ -9,7 +9,7 @@ export default defineConfig(({mode})=>{
   entrypoint:'./src/app.js',compatibilityDate:'2026-11-04',compatibilityFlags:['nodejs_compat'],
   observability:{enabled:true,redactQueryString:true,logs:{enabled:true,headSamplingRate:1},traces:{enabled:true,headSamplingRate:0.01}},
   env:{DB:bindings.d1(development?{name:'den-development-local'}:{id:process.env.DEN_D1_DATABASE_ID}),
-   MFA_ENCRYPTION_KEY:bindings.secret(),APP_ORIGIN:bindings.text(development?'http://localhost:8787':process.env.DEN_APP_ORIGIN),
+   MFA_ENCRYPTION_KEY:bindings.secret(),VAPID_PRIVATE_KEY:bindings.secret(),VAPID_PUBLIC_KEY:bindings.text(process.env.DEN_VAPID_PUBLIC_KEY??''),VAPID_SUBJECT:bindings.text(process.env.DEN_VAPID_SUBJECT??'mailto:security@den.global'),APP_ORIGIN:bindings.text(development?'http://localhost:8787':process.env.DEN_APP_ORIGIN),
    PRIMARY_ADMIN_ID:bindings.text(development?'not-provisioned':process.env.DEN_PRIMARY_ADMIN_ID)}
  }};
 });

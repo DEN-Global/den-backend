@@ -3,7 +3,7 @@ import {hashPassword} from './security.js';
 export const adminPages=Object.freeze(['overview','accounts','roles','verification','finance','audit','trade']);
 export const adminPermissions=Object.freeze(['finance_admin','rider_verification_admin','organization_verification_admin','warehouse.review','community_moderation_admin','delivery_operations_admin','shipping_admin','support_admin','security_audit_admin','global_shipping_admin','international_trade_admin','warehouse_admin','roles.assign','trade.continue_locked']);
 export function adminSection(path){
- if(path.startsWith('/api/platform/admin/reviews')||path.startsWith('/api/admin/businesses')||/^\/api\/admin\/(facilities|staff|records)/.test(path))return 'verification';
+ if(path.startsWith('/api/platform/admin/reviews')||path.startsWith('/api/admin/businesses')||path.startsWith('/api/admin/pets/')||/^\/api\/admin\/(facilities|staff|records)/.test(path))return 'verification';
  if(path==='/api/admin/trade')return 'trade';
  if(path==='/api/platform/admin/accounts')return 'accounts';
  const section=path.match(/^\/api\/admin-console\/([^/]+)/)?.[1];
