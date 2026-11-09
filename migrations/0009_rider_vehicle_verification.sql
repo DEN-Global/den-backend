@@ -1,0 +1,2 @@
+ALTER TABLE den_riders ADD COLUMN vehicle_plate TEXT NOT NULL DEFAULT '';
+ALTER TABLE den_riders ADD COLUMN plate_photo TEXT NOT NULL DEFAULT '';
