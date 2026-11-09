@@ -68,7 +68,8 @@ export async function handleRequest(request,env) {
   ensure(db,503,'DATABASE_NOT_CONFIGURED');
   if(!path.startsWith('/api/')) return env.ASSETS ? env.ASSETS.fetch(request) : response({error:'NOT_FOUND'},404);
   if(method!=='GET') {
-   ensure(request.headers.get('origin')===(env.APP_ORIGIN??url.origin),403,'ORIGIN_REJECTED');
+   const origin=request.headers.get('origin'),allowed=[env.APP_ORIGIN??url.origin,...(env.APP_ORIGIN_ALIASES??'').split(',').filter(Boolean)];
+   ensure(allowed.includes(origin),403,'ORIGIN_REJECTED');
    const ip=request.headers.get('cf-connecting-ip')??'local';
    await rateLimit(env,`write:${ip}`,90,60000);
   }
