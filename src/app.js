@@ -1,4 +1,4 @@
-import {emailReady,issueEmailCode,consumeEmailCode} from './email-signin.js';
+import {emailReady,issueEmailCode,consumeEmailCode,issueRegistrationEmailCode,consumeRegistrationEmailCode} from './email-signin.js';
 import {workspaceChoice,handleWorkspaceAccess,enforceWorkspace} from './workspace-access.js';
 import {handleAdminConsole,enforceAdminPage,adminSection} from './admin-console.js';
 import {handleCommunity} from './community.js';
@@ -6,7 +6,7 @@ import { handleServices } from './services-api.js';
 import { handlePlatform } from './platform.js';
 import { handleMobility } from './mobility.js';
 import { handlePets,handleAdminPets } from './pets.js';
-import { response, readJson, ensure, text, email, password as passwordValue, HttpError } from './http.js';
+import { response, readJson, ensure, text, email, password as passwordValue, registrationPassword, HttpError } from './http.js';
 import { randomToken, hashToken, hashPassword, verifyPassword, encryptSecret, decryptSecret, newTotp, checkTotp, constantTimeEqual } from './security.js';
 import { createAuditRecord, auditGenesis } from './audit.js';
 import { changeTradeState, authorizeFacility, PolicyError } from './policy.js';
@@ -74,15 +74,24 @@ export async function handleRequest(request,env) {
   }
   if(path==='/api/health'&&method==='GET') return response({status:'ok',service:'DEN shared platform API',contractVersion:'1.0.0'});
   if(path==='/api/auth/register'&&method==='POST') {
-   const body=await readJson(request),address=email(body.email),name=text(body.name,'name',100),password=passwordValue(body.password,12);
-   await rateLimit(env,`register:${request.headers.get('cf-connecting-ip')??'local'}`,5,3600000);
-   const id=crypto.randomUUID(),hash=await hashPassword(password),now=nowOf(env);
+   ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email),name=text(body.name,'name',100),password=registrationPassword(body.password);
+   ensure(typeof body.emailCode==='string',400,'EMAIL_VERIFICATION_REQUIRED');
+   await rateLimit(env,`register:${request.headers.get('cf-connecting-ip')??'local'}`,5,3600000);await rateLimit(env,`register-account:${address}`,8,3600000);
+   await consumeRegistrationEmailCode(env,address,body.emailCode,nowOf(env));
    ensure(!await first(db,'SELECT user_id FROM den_credentials WHERE email=?',address),409,'ACCOUNT_EXISTS');
+   const id=crypto.randomUUID(),hash=await hashPassword(password),now=nowOf(env);
    const details=[];if(body.phone!==undefined)details.push(q(db,'INSERT INTO den_profiles(user_id,display_name,phone) VALUES(?,?,?)',id,name,text(body.phone,'phone',40)));if(body.address!==undefined){const code=text(body.country,'country',2,2).toUpperCase();await country(env,code);details.push(q(db,'INSERT INTO den_addresses VALUES(?,?,?,?,?)',crypto.randomUUID(),id,'Home',text(body.address,'address',1000),code));}
    await db.batch([q(db,"INSERT INTO den_users(id,auth_subject,created_at) VALUES(?,?,?)",id,`password:${id}`,now),q(db,'INSERT INTO den_credentials(user_id,email,display_name,password_hash) VALUES(?,?,?,?)',id,address,name,hash),...details]);
-   return response({id,message:'Account created. Sign in to continue.'},201);
+   return response({id,message:'Email verified and account created.'},201);
   }
-  if(path==='/api/auth/options'&&method==='GET')return response({emailCodes:emailReady(env)});
+  if(path==='/api/auth/register-code'&&method==='POST') {
+   ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email);
+   text(body.name,'name',100);registrationPassword(body.password);text(body.phone,'phone',40);text(body.address,'address',1000);const code=text(body.country,'country',2,2).toUpperCase();await country(env,code);
+   await rateLimit(env,`register-code-ip:${request.headers.get('cf-connecting-ip')??'local'}`,6,3600000);await rateLimit(env,`register-code-email:${address}`,3,900000);
+   if(!await first(db,'SELECT user_id FROM den_credentials WHERE email=?',address))await issueRegistrationEmailCode(env,address,nowOf(env));
+   return response({message:'If this email can be registered, a verification code has been sent. It expires in 10 minutes.'});
+  }
+  if(path==='/api/auth/options'&&method==='GET')return response({emailCodes:emailReady(env),registrationEmail:emailReady(env)});
   if(path==='/api/auth/email-code'&&method==='POST'){
    ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email);
    await rateLimit(env,`email-ip:${request.headers.get('cf-connecting-ip')??'local'}`,8,900000);await rateLimit(env,`email-user:${address}`,3,900000);

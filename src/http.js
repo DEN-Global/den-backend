@@ -10,6 +10,11 @@ export function password(value,min=1) {
  ensure(typeof value==='string' && value.length>=min && value.length<=128,400,'INVALID_PASSWORD');
  return value;
 }
+export function registrationPassword(value) {
+ const result=password(value,12);
+ ensure(/[A-Za-z]/.test(result)&&/[0-9]/.test(result),400,'PASSWORD_REQUIRES_LETTER_AND_NUMBER');
+ return result;
+}
 export function email(value) {
  const result=text(value,'email',254).toLowerCase();
  ensure(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result),400,'INVALID_EMAIL');return result;
