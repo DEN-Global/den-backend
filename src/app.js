@@ -6,6 +6,7 @@ import { response, readJson, ensure, text, email, password as passwordValue, Htt
 import { randomToken, hashToken, hashPassword, verifyPassword, encryptSecret, decryptSecret, newTotp, checkTotp, constantTimeEqual } from './security.js';
 import { createAuditRecord, auditGenesis } from './audit.js';
 import { changeTradeState, authorizeFacility, PolicyError } from './policy.js';
+import { handleOrbit } from './orbit-api.js';
 
 const DUMMY_PASSWORD_HASH='scrypt:32768:8:3:00000000000000000000000000000000:fe9e18dc4b21500f22ff81ba92b7b2afafffdae5d8ff84ace233b05b455e79f3749106a05d521d1f9d94a01d978433ba3fb4ffee437ff518fb17aa0013741ac2';
 const roles=['warehouse_manager','receiving_officer','inventory_officer','packing_officer','dispatch_officer','warehouse_auditor'];
@@ -99,6 +100,7 @@ export async function handleRequest(request,env) {
   if(method!=='GET') ensure(await constantTimeEqual(request.headers.get('x-csrf-token'),actor.csrf_token),403,'CSRF_REJECTED');
   if(path==='/api/auth/me'&&method==='GET')return response({user:publicUser(actor),csrfToken:actor.csrf_token,freshMfa:actor.mfaVerified});
   if(path==='/api/auth/logout'&&method==='POST'){await run(db,'DELETE FROM den_sessions WHERE token_hash=?',actor.token_hash);return response({ok:true},200,{'set-cookie':sessionCookie('',request,0)});}
+  if(path.startsWith('/api/orbit/')) {const result=await handleOrbit(request,env,actor,path,method);if(result)return result;}
   if(path==='/api/auth/mfa/setup'&&method==='POST') {
    ensure(!actor.totp_enabled,409,'MFA_ALREADY_ENABLED');
    const body=await readJson(request),credentials=await first(db,'SELECT password_hash FROM den_credentials WHERE user_id=?',actor.id);
