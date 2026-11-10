@@ -87,7 +87,7 @@ export async function handleRequest(request,env) {
   }
   if(path==='/api/auth/register-code'&&method==='POST') {
    ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email);
-   text(body.name,'name',100);registrationPassword(body.password);text(body.phone,'phone',40);text(body.address,'address',1000);const code=text(body.country,'country',2,2).toUpperCase();await country(env,code);
+   text(body.name,'name',100);registrationPassword(body.password);text(body.phone,'phone',40);const code=text(body.country,'country',2,2).toUpperCase();await country(env,code);
    await rateLimit(env,`register-code-ip:${request.headers.get('cf-connecting-ip')??'local'}`,6,3600000);await rateLimit(env,`register-code-email:${address}`,3,900000);
    if(!await first(db,'SELECT user_id FROM den_credentials WHERE email=?',address))await issueRegistrationEmailCode(env,address,nowOf(env));
    return response({message:'If this email can be registered, a verification code has been sent. It expires in 10 minutes.'});
