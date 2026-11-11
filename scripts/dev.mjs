@@ -18,7 +18,7 @@ const types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg
 const server=createServer(async(req,res)=>{
  try{
   const url=new URL(req.url,origin),headers=new Headers();for(const[k,v]of Object.entries(req.headers))if(v)headers.set(k,Array.isArray(v)?v.join(','):v);
-  headers.set('cf-connecting-ip','127.0.0.1');
+  headers.set('x-forwarded-for','127.0.0.1');
   if(!url.pathname.startsWith('/api/')){
    const segments=decodeURIComponent(url.pathname).split('/').filter(Boolean),appName=segments[0];
    const named=appNames.has(appName),assets=named?resolve(`../den-${appName}/dist`):appName==='assets'?resolve('../den-warehouse/dist'):defaultAssets;

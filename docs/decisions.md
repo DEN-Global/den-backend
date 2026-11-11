@@ -59,7 +59,7 @@ The browser subsequently loaded backward to the first greeting and project discu
 
 The user explicitly put refunds on hold earlier. The final blueprint includes returns/refunds. Preserve refund/dispute data-model extensibility, but leave automatic compensation and refund eligibility disabled pending review; do not invent liability rules. This does not prevent a future authorized payment reversal implementation.
 
-The initial API suggestions included Supabase/Vercel. The user later explicitly selected Cloudflare instead of Supabase; Cloudflare is the controlling infrastructure direction. Historical competitor prices and Cloudflare limits in the chat require current official-source verification before use. No live pricing or quota facts were validated in this stage.
+The initial API suggestions included Supabase/Vercel, then Cloudflare, and finally the user selected Supabase and Vercel; Supabase Postgres and Vercel are the controlling infrastructure direction, and Cloudflare configuration has been removed. Historical competitor prices and Cloudflare limits in the chat require current official-source verification before use. No live pricing or quota facts were validated in this stage.
 
 ### Updated code-stage result
 
@@ -69,4 +69,4 @@ The new private backend repository is https://github.com/DEN-Global/den-backend 
 
 ## Persistence-stage result
 
-42 tests pass: 31 policy cases, 7 in-memory SQLite integration cases and 4 audit-chain cases. JavaScript syntax checks pass. Added migrations/0001_foundation.sql, src/audit.js, test/schema.test.js, test/audit.test.js and docs/persistence-and-cloudflare.md. The migration was executed only in fresh local in-memory databases. No Cloudflare database, deployment, real account or payment was created. Remote runtime, identity integration and user-facing journeys remain unverified.
+42 tests pass: 31 policy cases, 7 in-memory SQLite integration cases and 4 audit-chain cases. JavaScript syntax checks pass. Added migrations/0001_foundation.sql, src/audit.js, test/schema.test.js, test/audit.test.js and docs/persistence-and-postgres.md. The migration was executed only in fresh local in-memory databases. No Cloudflare database, deployment, real account or payment was created. Remote runtime, identity integration and user-facing journeys remain unverified.

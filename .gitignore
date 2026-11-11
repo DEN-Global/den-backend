@@ -2,9 +2,7 @@ node_modules/
 .env
 .env.*
 !.env.example
-.wrangler/
+.vercel/
 coverage/
 .data/
-.cloudflare/
 .build/
-.dev.vars

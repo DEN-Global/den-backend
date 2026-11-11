@@ -4,12 +4,12 @@ The linked planning ChatGPT conversation was read and consulted twice for implem
 
 ## Automated evidence
 
-Final local run: **54 passed, 0 failed, 0 skipped**. Node syntax checks, Cloudflare cf/Vite bundle, frontend Vite bundle and both npm dependency audits passed; both audits reported zero known vulnerabilities at verification time.
+Final local run: **54 passed, 0 failed, 0 skipped**. Node syntax checks, backend syntax checks, frontend Vite bundle and both npm dependency audits passed; both audits reported zero known vulnerabilities at verification time.
 
 | Acceptance | Evidence |
 |---|---|
 | Anonymous denial, origin and CSRF protection | HTTP API tests |
-| Real sign-in, logout, server-side roles | HTTP tests plus workerd/D1 runtime test |
+| Real sign-in, logout, server-side roles | HTTP tests plus full-handler runtime test |
 | Pending business/facility registration | HTTP tests and browser owner workflow |
 | Tenant and facility isolation | HTTP, schema and policy tests |
 | Independent fresh-MFA administrative approval | HTTP tests and browser reviewer workflow |

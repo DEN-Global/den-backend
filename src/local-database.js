@@ -1,4 +1,4 @@
-// Local development/test adapter only. Worker requests use the native D1 binding.
+// Local development and test adapter. Production uses src/postgres-database.js.
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';

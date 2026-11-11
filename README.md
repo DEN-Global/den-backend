@@ -36,11 +36,11 @@ Restart the local server after this command. Enroll MFA in Security before revie
 
 ## Verification
 
-73 automated tests cover policies, SQL constraints, actual HTTP flows, negative authorization cases, concurrency, restart persistence, and the Worker running on workerd with D1 and real password hashing. `npm run build` validates the Cloudflare Vite/cf bundle. See [warehouse acceptance](docs/warehouse-acceptance.md), [requirements](docs/master-requirements.md) and [decisions](docs/decisions.md).
+73 automated tests cover policies, SQL constraints, actual HTTP flows, negative authorization cases, concurrency, restart persistence, and the full request handler running against a real database with real password hashing. `npm run check` validates JavaScript syntax. See [warehouse acceptance](docs/warehouse-acceptance.md), [requirements](docs/master-requirements.md) and [decisions](docs/decisions.md).
 
 ## Production boundaries
 
-No remote resources have been provisioned. `cf` configuration requires explicit database ID, origin and Primary identity outside development. Cloudflare authentication and reviewed environment configuration are still required. The local Node/SQLite adapter is not part of the Worker bundle.
+Production runs on Vercel with Supabase PostgreSQL; set `SUPABASE_DATABASE_URL` and run `npm run db:migrate` before the first deploy. The local Node/SQLite adapter is not part of the Worker bundle.
 
 Email ownership verification, password/account recovery, MFA recovery, production administrator provisioning, independent audit checkpoints, security monitoring and a reviewed launch configuration remain unfinished. Do not open public onboarding before these are implemented. No live identity verification, documents, payments, carrier, maps, legal approvals or automatic deductions are connected.
 

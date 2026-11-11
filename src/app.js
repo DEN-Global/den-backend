@@ -18,6 +18,8 @@ const first=(db,sql,...args)=>q(db,sql,...args).first();
 const all=async(db,sql,...args)=>(await q(db,sql,...args).all()).results;
 const run=(db,sql,...args)=>q(db,sql,...args).run();
 const nowOf=env=>env.CLOCK?.now?.() ?? Date.now();
+// Trust the platform proxy header for the client address used by rate limits.
+const clientIp=request=>(request.headers.get('x-forwarded-for')?.split(',')[0].trim())||request.headers.get('x-real-ip')||'local';
 const cookie=(request)=>request.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('den_session='))?.slice(12);
 const sessionCookie=(token,request,age=28800)=>`den_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${new URL(request.url).protocol==='https:'?'; Secure':''}`;
 const publicUser=u=>({id:u.id,email:u.email,name:u.display_name,adminLevel:u.level??null,mfaEnabled:Boolean(u.totp_enabled),selectedRole:u.selectedRole??null,adminRole:u.roleName??null,permissions:u.permissions??[]});
@@ -39,7 +41,7 @@ async function auditBatch(env,actor,action,payload,statements) {
  if(actor.adminSection&&actor.id!==env.PRIMARY_ADMIN_ID){statements=[q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,NOT EXISTS(SELECT 1 FROM den_admin_page_locks WHERE page=? AND locked=1))',crypto.randomUUID(),actor.adminSection),q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,EXISTS(SELECT 1 FROM den_sessions WHERE token_hash=?))',crypto.randomUUID(),actor.token_hash),...statements];}
  const head=await first(env.DB,'SELECT sequence,event_hash FROM den_audit_events ORDER BY sequence DESC LIMIT 1');
  const record=await createAuditRecord({sequence:(head?.sequence??0)+1,actorId:actor.id,action,occurredAt:nowOf(env),payload:JSON.stringify(payload),previousHash:head?.event_hash??auditGenesis});
- // A duplicate sequence/hash from a concurrent append makes D1 roll back the entire batch.
+ // A duplicate sequence/hash from a concurrent append makes the database roll back the entire batch.
  const guard=crypto.randomUUID();
  return env.DB.batch([q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,(SELECT COALESCE(MAX(sequence),0)=? FROM den_audit_events))',guard,head?.sequence??0),...statements,q(env.DB,'INSERT INTO den_audit_events(sequence,actor_id,action,occurred_at,payload,previous_hash,event_hash) VALUES(?,?,?,?,?,?,?)',record.sequence,actor.id,action,record.occurredAt,record.payload,record.previousHash,record.eventHash),q(env.DB,'DELETE FROM den_transaction_guards')]);
 }
@@ -70,14 +72,14 @@ export async function handleRequest(request,env) {
   if(method!=='GET') {
    const origin=request.headers.get('origin'),allowed=[env.APP_ORIGIN??url.origin,...(env.APP_ORIGIN_ALIASES??'').split(',').filter(Boolean)];
    ensure(allowed.includes(origin),403,'ORIGIN_REJECTED');
-   const ip=request.headers.get('cf-connecting-ip')??'local';
+   const ip=clientIp(request);
    await rateLimit(env,`write:${ip}`,90,60000);
   }
   if(path==='/api/health'&&method==='GET') return response({status:'ok',service:'DEN shared platform API',contractVersion:'1.0.0'});
   if(path==='/api/auth/register'&&method==='POST') {
    ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email),name=text(body.name,'name',100),password=registrationPassword(body.password);
    ensure(typeof body.emailCode==='string',400,'EMAIL_VERIFICATION_REQUIRED');
-   await rateLimit(env,`register:${request.headers.get('cf-connecting-ip')??'local'}`,5,3600000);await rateLimit(env,`register-account:${address}`,8,3600000);
+   await rateLimit(env,`register:${clientIp(request)}`,5,3600000);await rateLimit(env,`register-account:${address}`,8,3600000);
    await consumeRegistrationEmailCode(env,address,body.emailCode,nowOf(env));
    ensure(!await first(db,'SELECT user_id FROM den_credentials WHERE email=?',address),409,'ACCOUNT_EXISTS');
    const id=crypto.randomUUID(),hash=await hashPassword(password),now=nowOf(env);
@@ -88,20 +90,20 @@ export async function handleRequest(request,env) {
   if(path==='/api/auth/register-code'&&method==='POST') {
    ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email);
    text(body.name,'name',100);registrationPassword(body.password);text(body.phone,'phone',40);const code=text(body.country,'country',2,2).toUpperCase();await country(env,code);
-   await rateLimit(env,`register-code-ip:${request.headers.get('cf-connecting-ip')??'local'}`,6,3600000);await rateLimit(env,`register-code-email:${address}`,3,900000);
+   await rateLimit(env,`register-code-ip:${clientIp(request)}`,6,3600000);await rateLimit(env,`register-code-email:${address}`,3,900000);
    if(!await first(db,'SELECT user_id FROM den_credentials WHERE email=?',address))await issueRegistrationEmailCode(env,address,nowOf(env));
    return response({message:'If this email can be registered, a verification code has been sent. It expires in 10 minutes.'});
   }
   if(path==='/api/auth/options'&&method==='GET')return response({emailCodes:emailReady(env),registrationEmail:emailReady(env)});
   if(path==='/api/auth/email-code'&&method==='POST'){
    ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email);
-   await rateLimit(env,`email-ip:${request.headers.get('cf-connecting-ip')??'local'}`,8,900000);await rateLimit(env,`email-user:${address}`,3,900000);
+   await rateLimit(env,`email-ip:${clientIp(request)}`,8,900000);await rateLimit(env,`email-user:${address}`,3,900000);
    const user=await first(db,"SELECT c.* FROM den_credentials c JOIN den_users u ON u.id=c.user_id WHERE c.email=? AND u.status='active' AND c.totp_enabled=1 AND NOT EXISTS(SELECT 1 FROM den_admin_accounts a WHERE a.user_id=c.user_id)",address);
    if(user)await issueEmailCode(env,user,nowOf(env));return response({message:'If this account is eligible, a code has been sent. Administrators use password sign-in.'});
   }
   if(path==='/api/auth/login'&&method==='POST') {
    const body=await readJson(request),address=email(body.email),emailMode=body.emailCode!==undefined,password=emailMode?'':passwordValue(body.password);
-   await rateLimit(env,`login:${request.headers.get('cf-connecting-ip')??'local'}`,12,900000);
+   await rateLimit(env,`login:${clientIp(request)}`,12,900000);
    const user=await first(db,'SELECT c.*,u.status FROM den_credentials c JOIN den_users u ON u.id=c.user_id WHERE c.email=?',address);
    // Equal-cost verification for unknown addresses avoids a cheap account enumeration path.
    const hash=user?.password_hash??DUMMY_PASSWORD_HASH;
@@ -284,6 +286,8 @@ export async function handleRequest(request,env) {
   if(error instanceof PolicyError)return response({error:error.code},error.code==='UNAUTHENTICATED'?401:error.code==='REVISION_CONFLICT'?409:403);
   const message=String(error?.message??error);
   if(/UNIQUE constraint|constraint failed|AUDIT|REVISION/i.test(message))return response({error:'CONCURRENT_OR_DUPLICATE_CHANGE'},409);
+  // PostgreSQL equivalents: unique/foreign-key violation or a failed guard CHECK.
+  if(['23505','23503','23514'].includes(error?.code))return response({error:'CONCURRENT_OR_DUPLICATE_CHANGE'},409);
   if(message.includes('ENCRYPTION_KEY_REQUIRED'))return response({error:'MFA_NOT_CONFIGURED'},503);
   console.error(JSON.stringify({event:'request.failed',path,requestId:crypto.randomUUID()}));
   return response({error:'INTERNAL_ERROR'},500);

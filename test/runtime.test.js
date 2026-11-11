@@ -1,23 +1,18 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {DatabaseSync} from 'node:sqlite';
-import {readFileSync,readdirSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
-import {execFileSync} from 'node:child_process';
-import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
-test('Workers runtime executes scrypt auth and real D1-backed warehouse registration',async t=>{
- execFileSync(process.execPath,['scripts/build-worker.mjs']);
- const mf=new Miniflare(convertV4MiniflareOptions({modules:true,scriptPath:'.build/worker.mjs',compatibilityDate:'2026-11-04',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'warehouse-runtime-test'},bindings:{APP_ORIGIN:'http://localhost',MFA_ENCRYPTION_KEY:randomBytes(32).toString('base64'),PRIMARY_ADMIN_ID:'not-provisioned'}}));
- t.after(()=>mf.dispose());const db=await mf.getD1Database('DB');
- // Use SQLite's own parser to preserve trigger bodies, then execute each statement in D1.
- const parser=new DatabaseSync(':memory:');t.after(()=>parser.close());
- for(const filename of readdirSync(new URL('../migrations/',import.meta.url)).filter(f=>f.endsWith('.sql')).sort()) {
-  let remaining=readFileSync(new URL(`../migrations/${filename}`,import.meta.url),'utf8');
-  while(remaining.trim()) {const sql=parser.prepare(remaining).sourceSQL;parser.exec(sql);await db.prepare(sql).run();remaining=remaining.slice(sql.length);}
- }
+import {handleRequest} from '../src/app.js';
+import {openLocalDatabase} from '../src/local-database.js';
+
+// End-to-end runtime check: the real request handler backed by the local SQLite adapter.
+// The same handler runs on PostgreSQL in production through src/postgres-database.js.
+test('Platform runtime executes scrypt auth and real SQLite-backed warehouse registration',async t=>{
+ const DB=openLocalDatabase(':memory:');
+ t.after(()=>DB.close());
+ const env={DB,APP_ORIGIN:'http://localhost',MFA_ENCRYPTION_KEY:randomBytes(32).toString('base64'),PRIMARY_ADMIN_ID:'not-provisioned'};
  let cookie='',csrf='';
  async function request(path,method='GET',body) {
-  const result=await mf.dispatchFetch('http://localhost'+path,{method,headers:{origin:'http://localhost','content-type':'application/json',cookie,'x-csrf-token':csrf},...(body?{body:JSON.stringify(body)}:{})});
+  const result=await handleRequest(new Request('http://localhost'+path,{method,headers:{origin:'http://localhost','content-type':'application/json',cookie,'x-csrf-token':csrf},...(body?{body:JSON.stringify(body)}:{})}),env);
   if(result.headers.has('set-cookie'))cookie=result.headers.get('set-cookie').split(';')[0];
   const data=await result.json();if(data.csrfToken)csrf=data.csrfToken;return {status:result.status,data};
  }
