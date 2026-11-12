@@ -1,0 +1,14 @@
+# Apply this scoped configuration only AFTER configuring custom SMTP.
+# It intentionally declares only email settings, leaving other project settings unchanged.
+project_id = "den-email-production"
+[auth.email]
+enable_confirmations = true
+max_frequency = "1m"
+otp_length = 6
+otp_expiry = 600
+[auth.email.template.magic_link]
+subject = "Your DEN Global verification code"
+content_path = "./supabase/templates/verification.html"
+[auth.email.template.confirmation]
+subject = "Verify your DEN Global email"
+content_path = "./supabase/templates/verification.html"
