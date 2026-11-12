@@ -2,11 +2,26 @@
 
 Project: DEN Global (`xhqxadhkcadxnzvbkfwr`). DEN's production API already supports Supabase OTP through server-only `SUPABASE_URL` and `SUPABASE_ANON_KEY` (a publishable key is supported by that header). These are distinct from `SUPABASE_DATABASE_URL`.
 
-## Current blocker
+## Domain-free Gmail option
 
-No sender domain is owned yet. Supabase's default provider only supports project-team recipients, is limited to two emails per hour, and this free project rejects custom email templates until custom SMTP or an eligible upgrade is configured. Public registration remains paused. Do not add the API email variables to production until actual code delivery is ready: their presence enables registration in the current server.
+Custom Gmail SMTP can be used without purchasing a domain. Enable Google 2-Step Verification and create an App Password named DEN Global. The user must create and enter the credential directly in Supabase; never paste it into chat, logs or Git.
 
-## Complete production delivery
+| Setting | Value |
+|---|---|
+| Sender email | Gmail address used to authenticate |
+| Sender name | DEN Global |
+| SMTP host | smtp.gmail.com |
+| Port | 465 |
+| Username | Full Gmail address |
+| Password | Google App Password, not the normal account password |
+
+Gmail account eligibility, sending limits and abuse controls apply. After saving SMTP, apply the six-digit code templates and test actual delivery. Keep public registration disabled until delivery is ready. The Supabase default sender is restricted to project-team recipients; this free project rejects template updates without custom SMTP.
+
+- App Password: https://myaccount.google.com/apppasswords
+- SMTP settings: https://supabase.com/dashboard/project/xhqxadhkcadxnzvbkfwr/auth/smtp
+- Reference: https://supabase.com/kb/troubleshooting/using-google-smtp-with-supabase-custom-smtp-ZZzU4Y
+
+## Alternative: domain-based production delivery
 
 1. Obtain a domain and an SMTP provider. Supabase supports providers such as Resend, Brevo and Amazon SES; choose based on your account and requirements.
 2. Verify the sender domain's DNS records with that provider. Use a sender such as `verification@your-domain`.
