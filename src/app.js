@@ -1,3 +1,4 @@
+import {passwordResetReady,issuePasswordReset,resetPassword} from './password-reset.js';
 import {emailReady,issueEmailCode,consumeEmailCode,issueRegistrationEmailCode,consumeRegistrationEmailCode} from './email-signin.js';
 import {workspaceChoice,handleWorkspaceAccess,enforceWorkspace} from './workspace-access.js';
 import {handleAdminConsole,enforceAdminPage,adminSection} from './admin-console.js';
@@ -13,6 +14,7 @@ import { changeTradeState, authorizeFacility, PolicyError } from './policy.js';
 
 const DUMMY_PASSWORD_HASH='scrypt:32768:8:3:00000000000000000000000000000000:fe9e18dc4b21500f22ff81ba92b7b2afafffdae5d8ff84ace233b05b455e79f3749106a05d521d1f9d94a01d978433ba3fb4ffee437ff518fb17aa0013741ac2';
 const roles=['warehouse_manager','receiving_officer','inventory_officer','packing_officer','dispatch_officer','warehouse_auditor'];
+const requestIp=request=>request.headers.get('cf-connecting-ip')??request.headers.get('x-real-ip')??request.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim()??'local';
 const q=(db,sql,...args)=>db.prepare(sql).bind(...args);
 const first=(db,sql,...args)=>q(db,sql,...args).first();
 const all=async(db,sql,...args)=>(await q(db,sql,...args).all()).results;
@@ -38,7 +40,7 @@ async function session(request,env) {
 async function auditBatch(env,actor,action,payload,statements) {
  if(actor.adminSection&&actor.id!==env.PRIMARY_ADMIN_ID){statements=[q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,NOT EXISTS(SELECT 1 FROM den_admin_page_locks WHERE page=? AND locked=1))',crypto.randomUUID(),actor.adminSection),q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,EXISTS(SELECT 1 FROM den_sessions WHERE token_hash=?))',crypto.randomUUID(),actor.token_hash),...statements];}
  const head=await first(env.DB,'SELECT sequence,event_hash FROM den_audit_events ORDER BY sequence DESC LIMIT 1');
- const record=await createAuditRecord({sequence:(head?.sequence??0)+1,actorId:actor.id,action,occurredAt:nowOf(env),payload:JSON.stringify(payload),previousHash:head?.event_hash??auditGenesis});
+ const record=await createAuditRecord({sequence:Number(head?.sequence??0)+1,actorId:actor.id,action,occurredAt:nowOf(env),payload:JSON.stringify(payload),previousHash:head?.event_hash??auditGenesis});
  // A duplicate sequence/hash from a concurrent append makes D1 roll back the entire batch.
  const guard=crypto.randomUUID();
  return env.DB.batch([q(env.DB,'INSERT INTO den_transaction_guards(id,valid) VALUES(?,(SELECT COALESCE(MAX(sequence),0)=? FROM den_audit_events))',guard,head?.sequence??0),...statements,q(env.DB,'INSERT INTO den_audit_events(sequence,actor_id,action,occurred_at,payload,previous_hash,event_hash) VALUES(?,?,?,?,?,?,?)',record.sequence,actor.id,action,record.occurredAt,record.payload,record.previousHash,record.eventHash),q(env.DB,'DELETE FROM den_transaction_guards')]);
@@ -70,14 +72,14 @@ export async function handleRequest(request,env) {
   if(method!=='GET') {
    const origin=request.headers.get('origin'),allowed=[env.APP_ORIGIN??url.origin,...(env.APP_ORIGIN_ALIASES??'').split(',').filter(Boolean)];
    ensure(allowed.includes(origin),403,'ORIGIN_REJECTED');
-   const ip=request.headers.get('cf-connecting-ip')??'local';
+   const ip=requestIp(request);
    await rateLimit(env,`write:${ip}`,90,60000);
   }
   if(path==='/api/health'&&method==='GET') return response({status:'ok',service:'DEN shared platform API',contractVersion:'1.0.0'});
   if(path==='/api/auth/register'&&method==='POST') {
    ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email),name=text(body.name,'name',100),password=registrationPassword(body.password);
    ensure(typeof body.emailCode==='string',400,'EMAIL_VERIFICATION_REQUIRED');
-   await rateLimit(env,`register:${request.headers.get('cf-connecting-ip')??'local'}`,5,3600000);await rateLimit(env,`register-account:${address}`,8,3600000);
+   await rateLimit(env,`register:${requestIp(request)}`,5,3600000);await rateLimit(env,`register-account:${address}`,8,3600000);
    await consumeRegistrationEmailCode(env,address,body.emailCode,nowOf(env));
    ensure(!await first(db,'SELECT user_id FROM den_credentials WHERE email=?',address),409,'ACCOUNT_EXISTS');
    const id=crypto.randomUUID(),hash=await hashPassword(password),now=nowOf(env);
@@ -88,20 +90,26 @@ export async function handleRequest(request,env) {
   if(path==='/api/auth/register-code'&&method==='POST') {
    ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email);
    text(body.name,'name',100);registrationPassword(body.password);text(body.phone,'phone',40);const code=text(body.country,'country',2,2).toUpperCase();await country(env,code);
-   await rateLimit(env,`register-code-ip:${request.headers.get('cf-connecting-ip')??'local'}`,6,3600000);await rateLimit(env,`register-code-email:${address}`,3,900000);
+   await rateLimit(env,`register-code-ip:${requestIp(request)}`,6,3600000);await rateLimit(env,`register-code-email:${address}`,3,900000);
    if(!await first(db,'SELECT user_id FROM den_credentials WHERE email=?',address))await issueRegistrationEmailCode(env,address,nowOf(env));
    return response({message:'If this email can be registered, a verification code has been sent. It expires in 10 minutes.'});
   }
-  if(path==='/api/auth/options'&&method==='GET')return response({emailCodes:emailReady(env),registrationEmail:emailReady(env)});
+  if(['/api/auth/forgot-password','/api/auth/reset-password'].includes(path)&&method==='POST'){
+   ensure(passwordResetReady(env),503,'PASSWORD_RESET_UNAVAILABLE');const body=await readJson(request),address=email(body.email);
+   await rateLimit(env,`reset-ip:${requestIp(request)}`,8,900000);await rateLimit(env,`reset-email:${address}`,6,900000);
+   if(path==='/api/auth/forgot-password'){await issuePasswordReset(env,address,nowOf(env));return response({message:'If this account is active, a reset code has been emailed.'});}
+   await resetPassword(env,address,body.code,registrationPassword(body.password),nowOf(env));return response({message:'Password reset. Sign in with your new password.'},200,{'set-cookie':sessionCookie('',request,0)});
+  }
+  if(path==='/api/auth/options'&&method==='GET')return response({emailCodes:emailReady(env),registrationEmail:emailReady(env),passwordReset:passwordResetReady(env)});
   if(path==='/api/auth/email-code'&&method==='POST'){
    ensure(emailReady(env),503,'EMAIL_DELIVERY_NOT_CONFIGURED');const body=await readJson(request),address=email(body.email);
-   await rateLimit(env,`email-ip:${request.headers.get('cf-connecting-ip')??'local'}`,8,900000);await rateLimit(env,`email-user:${address}`,3,900000);
+   await rateLimit(env,`email-ip:${requestIp(request)}`,8,900000);await rateLimit(env,`email-user:${address}`,3,900000);
    const user=await first(db,"SELECT c.* FROM den_credentials c JOIN den_users u ON u.id=c.user_id WHERE c.email=? AND u.status='active' AND c.totp_enabled=1 AND NOT EXISTS(SELECT 1 FROM den_admin_accounts a WHERE a.user_id=c.user_id)",address);
    if(user)await issueEmailCode(env,user,nowOf(env));return response({message:'If this account is eligible, a code has been sent. Administrators use password sign-in.'});
   }
   if(path==='/api/auth/login'&&method==='POST') {
    const body=await readJson(request),address=email(body.email),emailMode=body.emailCode!==undefined,password=emailMode?'':passwordValue(body.password);
-   await rateLimit(env,`login:${request.headers.get('cf-connecting-ip')??'local'}`,12,900000);
+   await rateLimit(env,`login:${requestIp(request)}`,12,900000);
    const user=await first(db,'SELECT c.*,u.status FROM den_credentials c JOIN den_users u ON u.id=c.user_id WHERE c.email=?',address);
    // Equal-cost verification for unknown addresses avoids a cheap account enumeration path.
    const hash=user?.password_hash??DUMMY_PASSWORD_HASH;
@@ -283,7 +291,7 @@ export async function handleRequest(request,env) {
   if(error instanceof HttpError)return response({error:error.code},error.status);
   if(error instanceof PolicyError)return response({error:error.code},error.code==='UNAUTHENTICATED'?401:error.code==='REVISION_CONFLICT'?409:403);
   const message=String(error?.message??error);
-  if(/UNIQUE constraint|constraint failed|AUDIT|REVISION/i.test(message))return response({error:'CONCURRENT_OR_DUPLICATE_CHANGE'},409);
+  if(['23502','23503','23505','23514','40001'].includes(error?.code)||/UNIQUE constraint|constraint failed|AUDIT|REVISION/i.test(message))return response({error:'CONCURRENT_OR_DUPLICATE_CHANGE'},409);
   if(message.includes('ENCRYPTION_KEY_REQUIRED'))return response({error:'MFA_NOT_CONFIGURED'},503);
   console.error(JSON.stringify({event:'request.failed',path,requestId:crypto.randomUUID()}));
   return response({error:'INTERNAL_ERROR'},500);

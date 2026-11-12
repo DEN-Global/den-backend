@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@mmmike/web-push": "1.5.0",
-    "otpauth": "9.6.0"
+    "otpauth": "9.6.0",
+    "pg": "^8.23.1"
   }
 }
