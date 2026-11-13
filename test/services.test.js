@@ -10,30 +10,5 @@ test('suspended rider cannot publish tracking even with an active signed-in acco
 test('authenticated Pricing Lab simulates without adopting rates or creating charges',async t=>{const f=await fixture(t),body={revenueMinor:15000,currency:'NGN',tiers:[{upToMinor:10000,rateBps:100},{upToMinor:null,rateBps:200}]};const result=await f.request('consumer','pricing-lab','POST',body);assert.equal(result.status,200);assert.equal(result.amountMinor,200);assert.equal(result.approved,false);assert.equal(result.providerChargeCreated,false);assert.equal((await f.request('consumer','pricing-lab','POST',{...body,revenueMinor:-1})).status,400);assert.equal((await f.request('consumer','wallet')).balances.length,0);});
 test('tracking ends after delivery or rider reassignment, including GPS reads',async t=>{const f=await fixture(t),point={idempotencyKey:'real-gps',latitude:6.4,longitude:3.3,accuracyMeters:15,recordedAt:f.now,simulated:false};assert.equal((await f.request('rider','orders/order/tracking','POST',point)).status,201);assert.equal((await f.request('consumer','orders/order/tracking')).state,'reported');await f.q(f.DB,"UPDATE den_orders SET rider_id=NULL,state='placed' WHERE id='order'").run();assert.equal((await f.request('rider','orders/order/tracking','POST',{...point,idempotencyKey:'after-release'})).status,404);assert.equal((await f.request('consumer','orders/order/tracking')).status,403);await f.q(f.DB,"UPDATE den_orders SET rider_id='rider',state='delivered' WHERE id='order'").run();assert.equal((await f.request('rider','orders/order/tracking','POST',{...point,idempotencyKey:'after-delivery'})).status,400);assert.equal((await f.request('consumer','orders/order/tracking')).status,403);});
 
-async function walletUsers(f){for(const id of ['consumer','stranger'])await f.q(f.DB,'INSERT INTO den_credentials(user_id,email,display_name,password_hash) VALUES(?,?,?,?)',id,id+'@example.test',id,'test-only').run();}
-const demoBody=(kind,amountMinor,key,extra={})=>({kind,amountMinor,currency:'NGN',idempotencyKey:key,...extra});
-test('demo wallet deposits, transfers and withdrawals balance without enabling live money',async t=>{
- const f=await fixture(t),r=f.request;await walletUsers(f);
- assert.equal((await r('consumer','wallet/demo','POST',demoBody('deposit',10000,'deposit-001'))).status,201);
- assert.equal((await r('consumer','wallet/demo','POST',demoBody('transfer',3000,'transfer-001',{recipientEmail:'stranger@example.test'}))).status,201);
- assert.equal((await r('consumer','wallet/demo','POST',demoBody('withdraw',2000,'withdraw-001'))).status,201);
- const a=await r('consumer','wallet'),b=await r('stranger','wallet');assert.equal(Number(a.demo.balances[0].amountMinor),5000);assert.equal(Number(b.demo.balances[0].amountMinor),3000);assert.equal(a.demo.entries.length,3);assert.equal(b.demo.entries[0].kind,'received');assert.equal(a.balances.length,0);assert.equal(a.liveMoneyEnabled,false);assert.equal(a.withdrawalsEnabled,false);
-});
-test('demo wallet retries do not duplicate funds and changed retries conflict',async t=>{
- const f=await fixture(t),r=f.request;const body=demoBody('deposit',1000,'replay-001');assert.equal((await r('consumer','wallet/demo','POST',body)).status,201);assert.equal((await r('consumer','wallet/demo','POST',body)).replayed,true);assert.equal((await r('consumer','wallet/demo','POST',{...body,amountMinor:2000})).status,409);assert.equal(Number((await r('consumer','wallet')).demo.balances[0].amountMinor),1000);
-});
-test('demo wallet rejects invalid amounts, unauthenticated actors, self transfers and missing recipients',async t=>{
- const f=await fixture(t),r=f.request;await walletUsers(f);
- for(const value of [-1,0,1.5,10000001])assert.equal((await r('consumer','wallet/demo','POST',demoBody('deposit',value,'invalid-001'))).status,400);
- assert.equal((await r('consumer','wallet/demo','POST',demoBody('deposit',100,'auth-001'),{authenticated:false})).status,401);
- assert.equal((await r('consumer','wallet/demo','POST',demoBody('transfer',100,'self-001',{recipientEmail:'consumer@example.test'}))).status,400);
- assert.equal((await r('consumer','wallet/demo','POST',demoBody('transfer',100,'missing-001',{recipientEmail:'nobody@example.test'}))).status,404);
- assert.equal((await r('consumer','wallet/demo','POST',{...demoBody('deposit',100,'currency-001'),currency:'XXX'})).status,400);
-});
-test('demo wallet cannot spend recorded funds or overdraw and transfer is atomic',async t=>{
- const f=await fixture(t),r=f.request;await walletUsers(f);await f.q(f.DB,'INSERT INTO den_service_wallet_entries VALUES(?,?,?,?,?,?)','recorded','consumer','NGN',90000,'Recorded transaction',f.now).run();
- assert.equal((await r('consumer','wallet/demo','POST',demoBody('withdraw',100,'withdraw-empty'))).status,409);
- await r('consumer','wallet/demo','POST',demoBody('deposit',1000,'fund-001'));
- const outcomes=await Promise.all([r('consumer','wallet/demo','POST',demoBody('withdraw',800,'parallel-001')),r('consumer','wallet/demo','POST',demoBody('withdraw',800,'parallel-002'))]);assert.equal(outcomes.filter(x=>x.status===201).length,1);assert.equal(Number((await r('consumer','wallet')).demo.balances[0].amountMinor),200);
- assert.equal((await r('consumer','wallet/demo','POST',demoBody('transfer',300,'too-large-001',{recipientEmail:'stranger@example.test'}))).status,409);assert.equal((await r('stranger','wallet')).demo.entries.length,0);assert.equal(Number((await r('consumer','wallet')).balances[0].amountMinor),90000);
-});
+test('removed demo wallet routes cannot create deposits, transfers or withdrawals',async t=>{const f=await fixture(t);for(const kind of ['deposit','transfer','withdraw'])assert.equal((await f.request('consumer','wallet/demo','POST',{kind,amountMinor:100,currency:'NGN',idempotencyKey:'disabled-001'})).status,423);const result=await f.request('consumer','wallet');assert.equal(result.providerConnected,false);assert.equal(result.fundingEnabled,false);assert.equal(result.transfersEnabled,false);assert.equal(result.demo,undefined);});
+test('historical demo entries stay stored but never appear as wallet balances',async t=>{const f=await fixture(t);await f.q(f.DB,'INSERT INTO den_service_wallet_entries VALUES(?,?,?,?,?,?)','old-demo','consumer','NGN',1000,'DEN demo:{"kind":"deposit","peerId":null}',f.now).run();const result=await f.request('consumer','wallet');assert.deepEqual(result.balances,[]);assert.deepEqual(result.entries,[]);assert.equal((await f.DB.prepare('SELECT COUNT(*) AS count FROM den_service_wallet_entries').first()).count,1);});
