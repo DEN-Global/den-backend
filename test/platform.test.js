@@ -23,3 +23,18 @@ test('wrong pickup QR, cash code, delivery code and consumer QR fail closed in v
 
 test('admin assignment protects Primary and all superaccounts from Lesser; trade roles stay locked',async t=>{const f=await setup(t),r=f.request;const post=(user,userId,level='ordinary',permissions=[])=>r(user,'admin/accounts','POST',{userId,level,permissions});assert.equal((await post('admin','other','lesser_super_admin')).status,200);f.actors.other={id:'other',authenticated:true,authenticatedAt:1800000000000,mfaVerified:true,adminLevel:'lesser_super_admin',permissions:['roles.assign']};assert.equal((await post('other','admin')).status,403);assert.equal((await post('other','other')).status,403);assert.equal((await post('other','buyer','lesser_super_admin')).status,403);assert.equal((await post('other','buyer')).status,403);assert.equal((await post('admin','buyer','ordinary',['international_trade_admin'])).status,409);assert.equal((await post('buyer','rider')).status,403);});
 test('catalog price currency, domestic address and inventory edits are constrained',async t=>{const f=await flow(t),r=f.request;assert.equal((await r('owner',`organizations/${f.orgId}/products`,'POST',{name:'Wrong currency',currency:'USD',priceMinor:1,stock:1})).status,400);assert.equal((await r('other',`products/${f.productId}`,'PATCH',{stock:99})).status,404);assert.equal((await r('owner',`products/${f.productId}`,'PATCH',{stock:-1})).status,400);assert.equal((await r('owner',`products/${f.productId}`,'PATCH',{stock:10})).status,200);const abroad=await r('buyer','addresses','POST',{label:'Abroad',address:'London test',country:'GB'});await r('buyer','cart','POST',{productId:f.productId,quantity:1});assert.equal((await r('buyer','orders','POST',{addressId:abroad.id,deliveryPayment:'digital'})).status,409);});
+
+ test('organization deletion is owner-only, confirms name, clears catalog and carts',async t=>{
+ const f=await setup(t),r=f.request,o=await r('owner','organizations','POST',{name:'Delete test',country:'NG'});
+ const p=await r('owner',`organizations/${o.id}/products`,'POST',{name:'Item',priceMinor:100,currency:'NGN',stock:2});await r('buyer','cart','POST',{productId:p.id,quantity:1});
+ assert.equal((await r('other',`organizations/${o.id}`,'DELETE',{confirmName:'Delete test'})).status,404);
+ assert.equal((await r('owner',`organizations/${o.id}`,'DELETE',{confirmName:'Wrong'})).status,400);
+ assert.equal((await r('owner',`organizations/${o.id}`,'DELETE',{confirmName:'Delete test'})).status,200);
+ assert.equal((await r('owner','organizations')).organizations.length,0);assert.equal((await r('buyer','cart')).items.length,0);
+ assert.equal((await f.DB.prepare('SELECT COUNT(*) AS count FROM den_products').first()).count,0);
+ });
+ test('organization deletion protects existing order history',async t=>{
+ const f=await setup(t),r=f.request,o=await r('owner','organizations','POST',{name:'Keep test',country:'NG'});
+ const p=await r('owner',`organizations/${o.id}/products`,'POST',{name:'Item',priceMinor:100,currency:'NGN',stock:2});const a=await r('buyer','addresses','POST',{label:'Home',address:'Test address',country:'NG'});await r('buyer','cart','POST',{productId:p.id,quantity:1});assert.equal((await r('buyer','orders','POST',{addressId:a.id,deliveryPayment:'cash'})).status,201);
+ const result=await r('owner',`organizations/${o.id}`,'DELETE',{confirmName:'Keep test'});assert.equal(result.status,409);assert.equal(result.error,'ORGANIZATION_HAS_HISTORY');assert.equal((await r('owner','organizations')).organizations.length,1);
+ });

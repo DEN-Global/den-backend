@@ -31,6 +31,17 @@ export async function handlePlatform(request,env,actor,h) {
   if(method==='POST'){ensure(!await first(db,'SELECT user_id FROM den_riders WHERE user_id=?',actor.id),409,'MANAGER_RIDER_CONFLICT');const orgId=id(),saved=await first(db,'SELECT country FROM den_addresses WHERE user_id=? LIMIT 1',actor.id),code=text(body.country??saved?.country,'country',2,2).toUpperCase();ensure(await first(db,'SELECT code FROM den_countries WHERE code=?',code),400,'COUNTRY_NOT_CONFIGURED');await audit('organization.registered',{organizationId:orgId},[q(db,"INSERT INTO den_organizations(id,owner_id,name,country,status,created_at,logo,about,license,support) VALUES(?,?,?,?,'approved',?,?,?,?,?)",orgId,actor.id,text(body.name,'name',120),code,now,image(body.logo),text(body.about??'','about',1000,0),text(body.license??'','license',500,0),text(body.support??'','support',254,0))]);return response({id:orgId,status:'approved'},201);}
  }
  const storeEdit=route.match(/^organizations\/([^/]+)$/);
+ if(storeEdit&&method==='DELETE'){
+  const org=await ownedOrg(storeEdit[1]);ensure(body.confirmName===org.name,400,'ORGANIZATION_NAME_CONFIRMATION_REQUIRED');
+  const history=await first(db,'SELECT (SELECT COUNT(*) FROM den_orders WHERE organization_id=?) + (SELECT COUNT(*) FROM den_storefront_comments WHERE organization_id=?) + (SELECT COUNT(*) FROM den_pet_services WHERE organization_id=?) AS count',org.id,org.id,org.id);
+  ensure(Number(history.count)===0,409,'ORGANIZATION_HAS_HISTORY');
+  await audit('organization.deleted',{organizationId:org.id,name:org.name},[
+   guard('EXISTS(SELECT 1 FROM den_organizations WHERE id=? AND owner_id=? AND name=?) AND NOT EXISTS(SELECT 1 FROM den_orders WHERE organization_id=?) AND NOT EXISTS(SELECT 1 FROM den_storefront_comments WHERE organization_id=?) AND NOT EXISTS(SELECT 1 FROM den_pet_services WHERE organization_id=?)',org.id,actor.id,body.confirmName,org.id,org.id,org.id),
+   q(db,'DELETE FROM den_cart WHERE product_id IN (SELECT id FROM den_products WHERE organization_id=?)',org.id),
+   q(db,'DELETE FROM den_products WHERE organization_id=?',org.id),
+   q(db,'DELETE FROM den_organizations WHERE id=? AND owner_id=?',org.id,actor.id)
+  ]);return response({ok:true});
+ }
  if(storeEdit&&method==='PATCH'){const org=await ownedOrg(storeEdit[1]);ensure(org.status==='approved',403,'ACTIVE_ORGANIZATION_REQUIRED');await audit('organization.updated',{organizationId:org.id},[q(db,'UPDATE den_organizations SET name=?,logo=?,about=?,support=? WHERE id=?',text(body.name,'name',120),image(body.logo),text(body.about??'','about',1000,0),text(body.support??'','support',254,0),org.id)]);return response({ok:true});}
  const productsMatch=route.match(/^organizations\/([^/]+)\/products$/);
  if(productsMatch) {
