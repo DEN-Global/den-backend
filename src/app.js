@@ -1,3 +1,4 @@
+import {handleFlutterwaveWebhook} from './flutterwave-wallet.js';
 import {passwordResetReady,issuePasswordReset,resetPassword} from './password-reset.js';
 import {emailReady,issueEmailCode,consumeEmailCode,issueRegistrationEmailCode,consumeRegistrationEmailCode} from './email-signin.js';
 import {workspaceChoice,handleWorkspaceAccess,enforceWorkspace} from './workspace-access.js';
@@ -69,6 +70,7 @@ export async function handleRequest(request,env) {
  try {
   ensure(db,503,'DATABASE_NOT_CONFIGURED');
   if(!path.startsWith('/api/')) return env.ASSETS ? env.ASSETS.fetch(request) : response({error:'NOT_FOUND'},404);
+  if(path==='/api/payments/flutterwave/webhook'&&method==='POST')return await handleFlutterwaveWebhook(request,env,{q,first,all,auditBatch,nowOf});
   if(method!=='GET') {
    const origin=request.headers.get('origin'),allowed=[env.APP_ORIGIN??url.origin,...(env.APP_ORIGIN_ALIASES??'').split(',').filter(Boolean)];
    ensure(allowed.includes(origin),403,'ORIGIN_REJECTED');

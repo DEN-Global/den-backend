@@ -1,3 +1,4 @@
+import {handleWalletFunding,flutterwaveReady} from './flutterwave-wallet.js';
 import { ensure, readJson, response, text, HttpError } from './http.js';
 import { authorizeChannel, appendMessage } from '../vendor/chat/index.js';
 import { recordLocation, latestLocation } from '../vendor/tracking/index.js';
@@ -56,10 +57,11 @@ export async function handleServices(request, env, actor, h) {
    }
   }
  }
+ const fundingResult=await handleWalletFunding(request,env,actor,h);if(fundingResult)return fundingResult;
  if(path==='/api/services/wallet'&&method==='GET') {
   const entries=await all(db,`SELECT id,currency,amount_minor AS "amountMinor",reference,created_at AS "createdAt" FROM den_service_wallet_entries WHERE user_id=? AND reference NOT LIKE 'DEN demo:%' ORDER BY created_at DESC,id DESC LIMIT 100`,actor.id);
   const balances=await all(db,`SELECT currency,SUM(amount_minor) AS "amountMinor" FROM den_service_wallet_entries WHERE user_id=? AND reference NOT LIKE 'DEN demo:%' GROUP BY currency`,actor.id);
-  return response({contractVersion:'1.0.0',balances,entries,liveMoneyEnabled:false,withdrawalsEnabled:false,fundingEnabled:false,transfersEnabled:false,providerConnected:false,notice:'Payment provider setup is required before funding, transfers or bank withdrawals are available.'});
+  return response({contractVersion:'1.0.0',balances,entries,liveMoneyEnabled:flutterwaveReady(env),withdrawalsEnabled:false,fundingEnabled:flutterwaveReady(env),transfersEnabled:false,providerConnected:flutterwaveReady(env),provider:'flutterwave',currency:'NGN',notice:'Payment provider setup is required before funding, transfers or bank withdrawals are available.'});
  }
  if(path.startsWith('/api/services/wallet')&&method!=='GET')throw new HttpError(423,'LIVE_MONEY_DISABLED');
  if(path==='/api/services/notifications'&&method==='GET')return response({notifications:await all(db,'SELECT id,message,created_at AS createdAt,read_at AS readAt FROM den_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',actor.id),delivery:'in_app_only'});
