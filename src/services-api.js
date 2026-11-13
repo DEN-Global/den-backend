@@ -57,9 +57,30 @@ export async function handleServices(request, env, actor, h) {
   }
  }
  if(path==='/api/services/wallet'&&method==='GET') {
-  const entries=await all(db,'SELECT id,currency,amount_minor AS amountMinor,reference,created_at AS createdAt FROM den_service_wallet_entries WHERE user_id=? ORDER BY created_at DESC LIMIT 100',actor.id);
-  const balances=await all(db,'SELECT currency,SUM(amount_minor) AS amountMinor FROM den_service_wallet_entries WHERE user_id=? GROUP BY currency',actor.id);
-  return response({contractVersion:'1.0.0',balances,entries,liveMoneyEnabled:false,withdrawalsEnabled:false,notice:'No live funding, settlement or withdrawals. An empty ledger has no funded balances.'});
+  const entries=await all(db,`SELECT id,currency,amount_minor AS "amountMinor",reference,created_at AS "createdAt" FROM den_service_wallet_entries WHERE user_id=? AND reference NOT LIKE 'DEN demo:%' ORDER BY created_at DESC,id DESC LIMIT 100`,actor.id);
+  const balances=await all(db,`SELECT currency,SUM(amount_minor) AS "amountMinor" FROM den_service_wallet_entries WHERE user_id=? AND reference NOT LIKE 'DEN demo:%' GROUP BY currency`,actor.id);
+  const demoEntries=await all(db,`SELECT id,currency,amount_minor AS "amountMinor",reference,created_at AS "createdAt" FROM den_service_wallet_entries WHERE user_id=? AND reference LIKE 'DEN demo:%' ORDER BY created_at DESC,id DESC LIMIT 100`,actor.id);
+  const demoBalances=await all(db,`SELECT currency,SUM(amount_minor) AS "amountMinor" FROM den_service_wallet_entries WHERE user_id=? AND reference LIKE 'DEN demo:%' GROUP BY currency`,actor.id);
+  return response({contractVersion:'1.0.0',balances,entries,demo:{enabled:true,balances:demoBalances,entries:demoEntries.map(e=>{const meta=JSON.parse(e.reference.slice(9));return {...e,reference:undefined,kind:meta.kind,peerId:meta.peerId,simulated:true};}),currencies:['NGN','GHS','USD','GBP','EUR','MAD','KES'],maxAmountMinor:10000000},liveMoneyEnabled:false,withdrawalsEnabled:false,notice:'Demo balances have no cash value. Live payments and bank withdrawals remain disabled.'});
+ }
+ if(path==='/api/services/wallet/demo'&&method==='POST'){
+  const body=await readJson(request),kind=body.kind,currency=String(body.currency??'').toUpperCase(),amount=body.amountMinor,key=text(body.idempotencyKey,'idempotency_key',120);
+  ensure(['deposit','transfer','withdraw'].includes(kind)&&['NGN','GHS','USD','GBP','EUR','MAD','KES'].includes(currency),400,'INVALID_DEMO_WALLET_OPERATION');
+  ensure(Number.isSafeInteger(amount)&&amount>0&&amount<=10000000,400,'INVALID_DEMO_AMOUNT');ensure(/^[A-Za-z0-9_-]{8,120}$/.test(key),400,'INVALID_IDEMPOTENCY_KEY');
+  let recipient=null;if(kind==='transfer'){const address=text(body.recipientEmail,'recipient_email',254).trim().toLowerCase();recipient=await first(db,"SELECT u.id FROM den_users u JOIN den_credentials c ON c.user_id=u.id WHERE lower(c.email)=? AND u.status='active'",address);ensure(recipient,404,'DEMO_RECIPIENT_NOT_FOUND');ensure(recipient.id!==actor.id,400,'SELF_TRANSFER_NOT_ALLOWED');}
+  const operation=`demo:${actor.id}:${key}`,sourceId=`${operation}:source`,signed=kind==='deposit'?amount:-amount,reference='DEN demo:'+JSON.stringify({kind,peerId:recipient?.id??null});
+  const replay=async()=>{const previous=await first(db,'SELECT * FROM den_service_wallet_entries WHERE id=?',sourceId);if(!previous)return null;ensure(previous.user_id===actor.id&&previous.currency===currency&&Number(previous.amount_minor)===signed&&previous.reference===reference,409,'IDEMPOTENCY_CONFLICT');return response({id:operation,simulated:true,replayed:true});};
+  const previous=await replay();if(previous)return previous;
+  const balance=async()=>Number((await first(db,"SELECT COALESCE(SUM(amount_minor),0) AS amount FROM den_service_wallet_entries WHERE user_id=? AND currency=? AND reference LIKE 'DEN demo:%'",actor.id,currency)).amount);
+  ensure(kind==='deposit'||await balance()>=amount,409,'INSUFFICIENT_DEMO_BALANCE');
+  const statements=[...([actor.id,...(recipient?[recipient.id]:[])].sort().map(userId=>q(db,'UPDATE den_users SET status=status WHERE id=?',userId))),
+   q(db,"INSERT INTO den_transaction_guards(id,valid) VALUES(?,CASE WHEN EXISTS(SELECT 1 FROM den_users WHERE id=? AND status='active') AND (?='deposit' OR (SELECT COALESCE(SUM(amount_minor),0) FROM den_service_wallet_entries WHERE user_id=? AND currency=? AND reference LIKE 'DEN demo:%')>=?) THEN 1 ELSE 0 END)",operation,actor.id,kind,actor.id,currency,amount)];
+  if(recipient)statements.push(q(db,"INSERT INTO den_transaction_guards(id,valid) VALUES(?,CASE WHEN EXISTS(SELECT 1 FROM den_users WHERE id=? AND status='active') THEN 1 ELSE 0 END)",operation+':recipient',recipient.id));
+  statements.push(q(db,'INSERT INTO den_service_wallet_entries(id,user_id,currency,amount_minor,reference,created_at) VALUES(?,?,?,?,?,?)',sourceId,actor.id,currency,signed,reference,now));
+  if(recipient)statements.push(q(db,'INSERT INTO den_service_wallet_entries(id,user_id,currency,amount_minor,reference,created_at) VALUES(?,?,?,?,?,?)',operation+':recipient',recipient.id,currency,amount,'DEN demo:'+JSON.stringify({kind:'received',peerId:actor.id}),now));
+  statements.push(q(db,'DELETE FROM den_transaction_guards WHERE id=? OR id=?',operation,operation+':recipient'));
+  try{await auditBatch(env,actor,'wallet.demo.'+kind,{operation,currency,amountMinor:amount,recipientId:recipient?.id??null,simulated:true},statements);}catch(error){const repeated=await replay();if(repeated)return repeated;if(kind!=='deposit'&&await balance()<amount)throw new HttpError(409,'INSUFFICIENT_DEMO_BALANCE');throw new HttpError(409,'DEMO_WALLET_CHANGED_RETRY');}
+  return response({id:operation,simulated:true},201);
  }
  if(path.startsWith('/api/services/wallet')&&method!=='GET')throw new HttpError(423,'LIVE_MONEY_DISABLED');
  if(path==='/api/services/notifications'&&method==='GET')return response({notifications:await all(db,'SELECT id,message,created_at AS createdAt,read_at AS readAt FROM den_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100',actor.id),delivery:'in_app_only'});
